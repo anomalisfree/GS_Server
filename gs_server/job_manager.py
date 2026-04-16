@@ -453,9 +453,12 @@ class JobManager:
         """Queue processing worker"""
         from .colmap_runner import ColmapRunner
         from .brush_runner import BrushRunner
+        from .mask_generator import MaskGenerator
         
         colmap = ColmapRunner(self)
         brush = BrushRunner(self)
+        mask_gen = MaskGenerator(self)
+        masking_enabled = get_config().masking.enabled
         
         while True:
             try:
@@ -468,6 +471,13 @@ class JobManager:
                 async with self._processing_lock:
                     try:
                         job.started_at = datetime.utcnow()
+                        
+                        # Stage 0: Generate masks (if enabled)
+                        if job.status in [JobStatus.UPLOADED, JobStatus.PENDING]:
+                            job_mask_enabled = job.config.get("masking", {}).get("enabled", masking_enabled)
+                            if job_mask_enabled:
+                                masks_dir = await mask_gen.run(job)
+                                job.config["_masks_dir"] = str(masks_dir)
                         
                         # Stage 1: COLMAP (if needed)
                         if job.status in [JobStatus.UPLOADED, JobStatus.PENDING]:

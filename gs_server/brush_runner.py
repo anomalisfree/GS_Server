@@ -72,18 +72,32 @@ class BrushRunner:
         )
         
         try:
-            # Собрать команду
-            cmd = [
-                "cargo", "run", "--release", "--",
-                str(dataset_path),
-                "--total-steps", str(total_steps),
+            # Собрать команду - используем собранный exe напрямую
+            brush_exe = self._brush_dir / "target" / "release" / "brush.exe"
+            if not brush_exe.exists():
+                # Fallback на cargo run если exe не найден
+                brush_exe = None
+            
+            if brush_exe:
+                cmd = [
+                    str(brush_exe),
+                    str(dataset_path),
+                ]
+            else:
+                cmd = [
+                    "cargo", "run", "--release", "--",
+                    str(dataset_path),
+                ]
+            
+            cmd.extend([
+                "--total-train-iters", str(total_steps),
                 "--max-resolution", str(max_resolution),
                 "--eval-every", str(eval_every),
                 "--export-every", str(export_every),
                 "--refine-every", str(refine_every),
                 "--export-path", str(output_dir),
                 "--export-name", "model_{iter}.ply",
-            ]
+            ])
             
             # Добавить дополнительные параметры из конфига
             if lr_mean := job_brush_config.get("lr_mean"):

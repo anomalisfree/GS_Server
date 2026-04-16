@@ -95,6 +95,13 @@ class BrushConfig:
     
     # Rerun visualization (отключено по умолчанию для headless)
     rerun_enabled: bool = False
+
+
+@dataclass
+class MaskingConfig:
+    """DeepLabV3 segmentation masking settings"""
+    enabled: bool = True  # Включить генерацию масок перед COLMAP
+    remove_classes: list = field(default_factory=lambda: ["sky", "person"])
     
     
 @dataclass
@@ -104,6 +111,7 @@ class AppConfig:
     paths: PathsConfig = field(default_factory=PathsConfig)
     colmap: ColmapConfig = field(default_factory=ColmapConfig)
     brush: BrushConfig = field(default_factory=BrushConfig)
+    masking: MaskingConfig = field(default_factory=MaskingConfig)
     
 
 def load_config() -> AppConfig:
@@ -139,6 +147,11 @@ def load_config() -> AppConfig:
     config.brush.max_resolution = int(os.getenv("BRUSH_MAX_RESOLUTION", config.brush.max_resolution))
     config.brush.eval_every = int(os.getenv("BRUSH_EVAL_EVERY", config.brush.eval_every))
     config.brush.export_every = int(os.getenv("BRUSH_EXPORT_EVERY", config.brush.export_every))
+    
+    # Masking
+    config.masking.enabled = os.getenv("MASKING_ENABLED", "true").lower() == "true"
+    if remove := os.getenv("MASKING_REMOVE_CLASSES"):
+        config.masking.remove_classes = [c.strip() for c in remove.split(",")]
     
     config.paths.ensure_directories()
     

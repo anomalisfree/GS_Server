@@ -57,10 +57,14 @@ class ColmapRunner:
         )
         
         try:
+            # Determine mask path (set by mask_generator)
+            masks_dir = job.config.get("_masks_dir")
+            
             # 1. Feature Extraction
             await self._run_feature_extraction(
                 job_id, images_dir, database_path,
-                use_gpu, camera_model, single_camera, max_image_size
+                use_gpu, camera_model, single_camera, max_image_size,
+                mask_path=masks_dir
             )
             
             if (await self._job_manager.get_job(job_id)).status == JobStatus.CANCELLED:
@@ -116,7 +120,8 @@ class ColmapRunner:
         use_gpu: bool,
         camera_model: str,
         single_camera: bool,
-        max_image_size: int
+        max_image_size: int,
+        mask_path: str = None
     ):
         """Stage 1: Feature extraction"""
         await self._job_manager.update_job_progress(
@@ -139,6 +144,9 @@ class ColmapRunner:
             "--FeatureExtraction.use_gpu", "1" if use_gpu else "0",
             "--SiftExtraction.max_num_features", str(self._config.colmap.sift_max_features),
         ]
+        
+        if mask_path:
+            cmd.extend(["--ImageReader.mask_path", str(mask_path)])
         
         await self._run_command(
             job_id, cmd, ColmapStage.FEATURE_EXTRACTION,
