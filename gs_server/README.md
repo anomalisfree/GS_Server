@@ -5,8 +5,10 @@ Automatic server for image processing through COLMAP and Gaussian Splatting trai
 ## Features
 
 - 📤 **Image Upload** - accepts images via HTTP API (supports large files with chunked upload)
+- 🔄 **EXIF Normalization** - automatically bakes EXIF orientation into pixels before any processing, so COLMAP, Brush and masks all see the same orientation (critical for smartphone photos)
+- 🎭 **Semantic Masking** - DeepLabV3 segmentation removes dynamic objects (people, cars, bikes, etc.) before COLMAP
 - 🔄 **COLMAP Processing** - automatic Structure-from-Motion reconstruction
-- 🎓 **Brush Training** - 3D Gaussian Splatting model training
+- 🎓 **Brush Training** - 3D Gaussian Splatting model training with tuned anti-floater parameters
 - 📊 **Real-time Monitoring** - progress tracking via WebSocket
 - 📥 **Model Download** - retrieve ready .ply files
 
@@ -44,7 +46,9 @@ GS_HOST=0.0.0.0 GS_PORT=8080 python -m gs_server
 | `GS_JOBS_DIR` | Jobs directory | `./jobs` |
 | `GS_COLMAP_EXE` | Path to COLMAP | `../colmap/bin/colmap.exe` |
 | `GS_BRUSH_DIR` | Path to Brush | `../brush` |
-| `COLMAP_USE_GPU` | Use GPU | `true` |
+| `COLMAP_USE_GPU` | Use GPU for COLMAP | `true` |
+| `MASKING_ENABLED` | Enable semantic masking | `true` |
+| `MASKING_REMOVE_CLASSES` | Comma-separated classes to mask | `bicycle,bus,car,cat,dog,motorbike,person` |
 | `BRUSH_TOTAL_STEPS` | Training steps | `30000` |
 | `BRUSH_MAX_RESOLUTION` | Max resolution | `1920` |
 
@@ -188,14 +192,17 @@ gs_server/
 1. **PENDING** - Job created, waiting for upload
 2. **UPLOADING** - Image upload in progress
 3. **UPLOADED** - Upload completed
-4. **COLMAP_RUNNING** - COLMAP processing
+4. **PROCESSING** (automatic, before COLMAP)
+   - **Stage 0a: EXIF Normalization** - bakes EXIF orientation into pixels; ensures COLMAP, Brush, and masks all read identical pixel data regardless of how the phone saved the image
+   - **Stage 0b: Semantic Masking** - generates per-image masks using DeepLabV3 (ResNet-101, VOC) to exclude dynamic objects
+5. **COLMAP_RUNNING** - COLMAP processing
    - Feature Extraction
    - Feature Matching
    - Sparse Reconstruction
    - Image Undistortion
-5. **COLMAP_DONE** - COLMAP completed
-6. **TRAINING** - Brush training
-7. **COMPLETED** - Done!
+6. **COLMAP_DONE** - COLMAP completed
+7. **TRAINING** - Brush training
+8. **COMPLETED** - Done!
 
 ## COLMAP Settings
 
@@ -211,7 +218,24 @@ gs_server/
 }
 ```
 
+## Masking Settings
+
+Masking uses DeepLabV3-ResNet101 (COCO/VOC) to detect and mask out dynamic objects so they do not corrupt COLMAP point cloud and Gaussian Splatting training.
+
+Supported classes (VOC): `aeroplane`, `bicycle`, `bird`, `boat`, `bottle`, `bus`, `car`, `cat`, `chair`, `cow`, `diningtable`, `dog`, `horse`, `motorbike`, `person`, `pottedplant`, `sheep`, `sofa`, `train`, `tvmonitor`
+
+```json
+{
+    "masking_config": {
+        "enabled": true,
+        "remove_classes": ["bicycle", "bus", "car", "cat", "dog", "motorbike", "person"]
+    }
+}
+```
+
 ## Brush Settings
+
+The defaults are tuned to minimise floaters and constrain Gaussian growth to well-covered scene areas.
 
 ```json
 {
@@ -219,14 +243,34 @@ gs_server/
         "total_steps": 30000,
         "max_resolution": 1920,
         "eval_every": 1000,
-        "export_every": 5000,
+        "export_every": 2500,
         "lr_mean": 2e-5,
         "lr_opac": 0.012,
-        "ssim_weight": 0.2,
-        "max_splats": 10000000
+
+        "ssim_weight": 0.3,
+
+        "max_splats": 2000000,
+        "growth_grad_threshold": 0.006,
+        "growth_select_fraction": 0.12,
+        "stop_growth_at": 12000,
+
+        "opac_decay": 0.007,
+        "scale_decay": 0.004
     }
 }
 ```
+
+### Anti-floater parameters explained
+
+| Parameter | Default | Description |
+|---|---|---|
+| `growth_grad_threshold` | `0.006` | Gaussians only grow where position gradient exceeds this value — i.e. in regions well-covered by COLMAP points. Raise to be more conservative. |
+| `growth_select_fraction` | `0.12` | Fraction of above-threshold Gaussians that actually grow each refinement step. Lower = fewer floaters. |
+| `stop_growth_at` | `12000` | Stop densification at this step. After this only decay and pruning happen. |
+| `max_splats` | `2000000` | Hard cap on total Gaussians. Limits noise budget. |
+| `opac_decay` | `0.007` | Opacity regularisation — transparent/unused Gaussians are pruned faster. |
+| `scale_decay` | `0.004` | Scale regularisation — prevents Gaussians from bloating into empty space. |
+| `ssim_weight` | `0.3` | Weight of structural similarity loss vs. L1. Higher = better structure preservation. |
 
 ## License
 

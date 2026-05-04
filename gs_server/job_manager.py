@@ -454,6 +454,7 @@ class JobManager:
         from .colmap_runner import ColmapRunner
         from .brush_runner import BrushRunner
         from .mask_generator import MaskGenerator
+        from .utils import normalize_exif_orientation
         
         colmap = ColmapRunner(self)
         brush = BrushRunner(self)
@@ -472,7 +473,19 @@ class JobManager:
                     try:
                         job.started_at = datetime.utcnow()
                         
-                        # Stage 0: Generate masks (if enabled)
+                        # Stage 0a: Normalize EXIF orientation in uploaded images
+                        if job.status in [JobStatus.UPLOADED, JobStatus.PENDING]:
+                            await self.update_job_progress(
+                                job_id,
+                                message="Normalizing image orientations...",
+                                overall_progress=2.0,
+                            )
+                            loop = asyncio.get_event_loop()
+                            fixed = await loop.run_in_executor(
+                                None, normalize_exif_orientation, job.images_dir
+                            )
+                        
+                        # Stage 0b: Generate masks (if enabled)
                         if job.status in [JobStatus.UPLOADED, JobStatus.PENDING]:
                             job_mask_enabled = job.config.get("masking", {}).get("enabled", masking_enabled)
                             if job_mask_enabled:

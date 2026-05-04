@@ -3,9 +3,13 @@
 """
 
 import asyncio
+import logging
 import re
+from pathlib import Path
 from typing import AsyncIterator, Callable, Optional, Dict, Any
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -138,6 +142,52 @@ class BrushOutputParser(OutputParser):
         
         return result
 
+
+def normalize_exif_orientation(images_dir: Path) -> int:
+    """Bake EXIF orientation into pixel data for all images in a directory.
+    
+    COLMAP and Brush read raw pixels without applying EXIF orientation.
+    Phone photos often have EXIF Orientation != 1 (rotated).
+    This function applies the rotation to actual pixels and resets/strips the tag.
+    
+    Returns the number of images that were re-saved.
+    """
+    from PIL import Image, ImageOps
+
+    image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
+    fixed = 0
+
+    for img_path in sorted(images_dir.iterdir()):
+        if img_path.suffix.lower() not in image_extensions:
+            continue
+
+        try:
+            img = Image.open(img_path)
+
+            # Check if EXIF orientation exists and is non-trivial
+            exif = img.getexif()
+            orientation = exif.get(0x0112)  # 0x0112 = Orientation tag
+            if orientation is None or orientation == 1:
+                img.close()
+                continue
+
+            # Apply EXIF orientation to pixels
+            img = ImageOps.exif_transpose(img)
+
+            # Re-save with corrected pixels (EXIF orientation tag is stripped)
+            img.save(img_path, quality=95, exif=b"")
+            img.close()
+            fixed += 1
+
+        except Exception as e:
+            logger.warning(f"Failed to normalize EXIF for {img_path.name}: {e}")
+
+    if fixed > 0:
+        logger.info(f"Normalized EXIF orientation for {fixed} images in {images_dir}")
+    else:
+        logger.info(f"No EXIF orientation correction needed for images in {images_dir}")
+
+    return fixed
 
 class ColmapOutputParser(OutputParser):
     """Парсер вывода COLMAP"""

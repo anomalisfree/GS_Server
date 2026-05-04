@@ -104,10 +104,24 @@ class BrushRunner:
                 cmd.extend(["--lr-mean", str(lr_mean)])
             if lr_opac := job_brush_config.get("lr_opac"):
                 cmd.extend(["--lr-opac", str(lr_opac)])
-            if ssim_weight := job_brush_config.get("ssim_weight"):
-                cmd.extend(["--ssim-weight", str(ssim_weight)])
             if max_splats := job_brush_config.get("max_splats"):
                 cmd.extend(["--max-splats", str(max_splats)])
+
+            # Growth / noise control
+            growth_grad = job_brush_config.get("growth_grad_threshold", brush_config.growth_grad_threshold)
+            growth_frac = job_brush_config.get("growth_select_fraction", brush_config.growth_select_fraction)
+            growth_stop = job_brush_config.get("stop_growth_at", brush_config.stop_growth_at)
+            opac_decay   = job_brush_config.get("opac_decay",   brush_config.opac_decay)
+            scale_decay  = job_brush_config.get("scale_decay",  brush_config.scale_decay)
+            ssim_weight  = job_brush_config.get("ssim_weight",  brush_config.ssim_weight)
+            cmd.extend([
+                "--growth-grad-threshold",   str(growth_grad),
+                "--growth-select-fraction",  str(growth_frac),
+                "--growth-stop-iter",        str(growth_stop),
+                "--opac-decay",              str(opac_decay),
+                "--scale-decay",             str(scale_decay),
+                "--ssim-weight",             str(ssim_weight),
+            ])
             
             # Устанавливаем переменные окружения для отключения интерактивного вывода
             # и включения логов

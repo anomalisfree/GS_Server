@@ -85,13 +85,23 @@ class BrushConfig:
     
     # Refinement
     refine_every: int = 200  # Каждые 200 шагов выводится количество сплатов
-    growth_grad_threshold: float = 0.003
-    growth_select_fraction: float = 0.2
-    stop_growth_at: int = 15000
-    max_splats: int = 10000000
+    # Higher threshold → grow only where gradient is strong (well-covered by COLMAP points)
+    growth_grad_threshold: float = 0.006
+    # Lower fraction → less aggressive densification, fewer floaters
+    growth_select_fraction: float = 0.12
+    # Stop growth earlier → no new Gaussians spawned in poorly-covered areas late in training
+    stop_growth_at: int = 12000
+    # Lower cap → fewer total Gaussians, less noise budget
+    max_splats: int = 2000000
+    
+    # Decay regularization
+    # Higher opac_decay → transparent/dead Gaussians pruned faster
+    opac_decay: float = 0.007
+    # Higher scale_decay → prevents Gaussians from bloating into empty space
+    scale_decay: float = 0.004
     
     # Loss
-    ssim_weight: float = 0.2
+    ssim_weight: float = 0.3
     
     # Rerun visualization (отключено по умолчанию для headless)
     rerun_enabled: bool = False
@@ -101,7 +111,7 @@ class BrushConfig:
 class MaskingConfig:
     """DeepLabV3 segmentation masking settings"""
     enabled: bool = True  # Включить генерацию масок перед COLMAP
-    remove_classes: list = field(default_factory=lambda: ["sky", "person"])
+    remove_classes: list = field(default_factory=lambda: ["bicycle", "bus", "car", "cat", "dog", "motorbike", "person"])
     
     
 @dataclass
