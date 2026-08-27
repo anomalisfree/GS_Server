@@ -185,39 +185,61 @@ class MaskGenerator:
 
         self._load_model()
 
-        for i, img_path in enumerate(image_files):
-            try:
-                img = Image.open(img_path).convert("RGB")
-                input_tensor = self._transforms(img).unsqueeze(0).to(self._device)
+        # Use larger batches on GPU, single image on CPU
+        batch_size = 8 if (self._device and self._device.type == "cuda") else 1
 
-                with torch.no_grad():
-                    output = self._model(input_tensor)["out"]
-                    pred = output.argmax(1).squeeze(0).cpu().numpy()
-
-                # Build mask: 255 = keep, 0 = ignore
+        def process_batch(batch_paths: list) -> list:
+            """Run inference on a batch of images, return (mask_array, img_path) pairs."""
+            imgs = [Image.open(p).convert("RGB") for p in batch_paths]
+            tensors = torch.stack([self._transforms(img) for img in imgs]).to(self._device)
+            with torch.no_grad():
+                output = self._model(tensors)["out"]
+                preds = output.argmax(1).cpu().numpy()  # (B, H, W)
+            results = []
+            for pred, img_path in zip(preds, batch_paths):
                 mask = np.full(pred.shape, 255, dtype=np.uint8)
                 for idx in class_indices:
                     mask[pred == idx] = 0
+                results.append((mask, img_path))
+            return results
 
-                # Save mask — COLMAP expects <image_name>.png in the mask dir
-                mask_filename = img_path.name + ".png"
-                mask_img = Image.fromarray(mask, mode="L")
-                mask_img.save(masks_dir / mask_filename)
-
+        processed = 0
+        # Process in batches
+        for batch_start in range(0, total, batch_size):
+            batch_paths = image_files[batch_start:batch_start + batch_size]
+            try:
+                results = process_batch(batch_paths)
+                for mask, img_path in results:
+                    mask_filename = img_path.name + ".png"
+                    Image.fromarray(mask, mode="L").save(masks_dir / mask_filename)
+                    processed += 1
             except Exception as e:
-                logger.error(f"Error generating mask for {img_path.name}: {e}")
+                logger.error(f"Error in batch starting at {batch_paths[0].name}: {e}")
+                # Fallback: process individually
+                for img_path in batch_paths:
+                    try:
+                        img = Image.open(img_path).convert("RGB")
+                        tensor = self._transforms(img).unsqueeze(0).to(self._device)
+                        with torch.no_grad():
+                            pred = self._model(tensor)["out"].argmax(1).squeeze(0).cpu().numpy()
+                        mask = np.full(pred.shape, 255, dtype=np.uint8)
+                        for idx in class_indices:
+                            mask[pred == idx] = 0
+                        Image.fromarray(mask, mode="L").save(masks_dir / (img_path.name + ".png"))
+                    except Exception as e2:
+                        logger.error(f"Error generating mask for {img_path.name}: {e2}")
+                    processed += 1
 
-            # Update progress periodically
-            if (i + 1) % max(1, total // 10) == 0 or i == total - 1:
-                progress = 3.0 + (i + 1) / total * 2.0  # 3% → 5%
-                asyncio.run_coroutine_threadsafe(
-                    self._job_manager.update_job_progress(
-                        job_id,
-                        message=f"Generating masks ({i + 1}/{total})...",
-                        overall_progress=progress,
-                    ),
-                    loop,
-                )
+            # Update progress
+            progress = 3.0 + processed / total * 2.0  # 3% → 5%
+            asyncio.run_coroutine_threadsafe(
+                self._job_manager.update_job_progress(
+                    job_id,
+                    message=f"Generating masks ({processed}/{total})...",
+                    overall_progress=progress,
+                ),
+                loop,
+            )
 
         # Free GPU memory
         if self._device and self._device.type == "cuda":

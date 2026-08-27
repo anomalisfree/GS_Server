@@ -30,6 +30,9 @@ class GSClient:
         self, 
         name: str, 
         auto_start: bool = True,
+        training_mode: str = "colmap_images",
+        dataset_path: Optional[str] = None,
+        pointcloud_path: Optional[str] = None,
         colmap_config: Optional[dict] = None,
         brush_config: Optional[dict] = None
     ) -> dict:
@@ -37,7 +40,12 @@ class GSClient:
         payload = {
             "name": name,
             "auto_start": auto_start,
+            "training_mode": training_mode,
         }
+        if dataset_path:
+            payload["dataset_path"] = dataset_path
+        if pointcloud_path:
+            payload["pointcloud_path"] = pointcloud_path
         if colmap_config:
             payload["colmap_config"] = colmap_config
         if brush_config:
@@ -141,10 +149,66 @@ class GSClient:
         response = requests.post(f"{self.base_url}/jobs/{job_id}/upload/complete")
         response.raise_for_status()
         return response.json()
+
+    def upload_pointcloud(self, job_id: str, filepath: str) -> dict:
+        """Загрузить points3d.ply для hybrid режима"""
+        filename = os.path.basename(filepath)
+        with open(filepath, "rb") as f:
+            response = requests.post(
+                f"{self.base_url}/jobs/{job_id}/pointcloud",
+                files={"file": (filename, f, "application/octet-stream")}
+            )
+        response.raise_for_status()
+        return response.json()
+
+    def upload_pointcloud_chunked(
+        self,
+        job_id: str,
+        filepath: str,
+        chunk_size: int = 20 * 1024 * 1024
+    ) -> dict:
+        """Загрузить points3d.ply частями"""
+        filename = os.path.basename(filepath)
+        file_size = os.path.getsize(filepath)
+        total_chunks = math.ceil(file_size / chunk_size)
+
+        with open(filepath, "rb") as f:
+            for i in range(total_chunks):
+                chunk_data = f.read(chunk_size)
+                response = requests.post(
+                    f"{self.base_url}/jobs/{job_id}/pointcloud/chunk",
+                    data={
+                        "filename": filename,
+                        "chunk_index": i,
+                        "total_chunks": total_chunks,
+                    },
+                    files={"chunk": chunk_data},
+                )
+                response.raise_for_status()
+                print(f"Uploaded pointcloud chunk {i + 1}/{total_chunks}")
+
+        return {
+            "status": "complete",
+            "filename": filename,
+            "total_chunks": total_chunks,
+        }
     
-    def start_job(self, job_id: str, brush_config: Optional[dict] = None) -> dict:
+    def start_job(
+        self,
+        job_id: str,
+        training_mode: Optional[str] = None,
+        dataset_path: Optional[str] = None,
+        pointcloud_path: Optional[str] = None,
+        brush_config: Optional[dict] = None
+    ) -> dict:
         """Запустить задачу вручную"""
         payload = {}
+        if training_mode:
+            payload["training_mode"] = training_mode
+        if dataset_path:
+            payload["dataset_path"] = dataset_path
+        if pointcloud_path:
+            payload["pointcloud_path"] = pointcloud_path
         if brush_config:
             payload["brush_config"] = brush_config
             
@@ -275,6 +339,9 @@ def main():
     parser.add_argument('--name', default='my_scene', help='Job name')
     parser.add_argument('--steps', type=int, default=30000, help='Training steps')
     parser.add_argument('--output', default='model.ply', help='Output path for model')
+    parser.add_argument('--mode', default='colmap_images', choices=['colmap_images', 'pointcloud_only', 'hybrid_colmap_pointcloud'], help='Training mode')
+    parser.add_argument('--dataset-path', help='Server path for prepared Nerfstudio dataset (for pointcloud_only)')
+    parser.add_argument('--pointcloud', help='Path to local points3d.ply for hybrid mode')
     
     args = parser.parse_args()
     
@@ -286,26 +353,48 @@ def main():
     print(f"Server status: {status['status']}")
     print(f"Active jobs: {status['active_jobs']}, Queued: {status['queued_jobs']}")
     
-    if not args.images:
-        print("\nUsage: python client_example.py --images <path_to_images>")
+    if args.mode in ['colmap_images', 'hybrid_colmap_pointcloud'] and not args.images:
+        print("\nUsage for image-based modes: python client_example.py --mode colmap_images --images <path_to_images>")
         return
     
     # Создать задачу
     print(f"\nCreating job '{args.name}'...")
     job = client.create_job(
         name=args.name,
+        training_mode=args.mode,
+        dataset_path=args.dataset_path,
         brush_config={"total_steps": args.steps}
     )
     job_id = job['job_id']
     print(f"Job created: {job_id}")
+
+    if args.mode == 'hybrid_colmap_pointcloud':
+        if not args.pointcloud:
+            print("Hybrid mode requires --pointcloud <local points3d.ply>")
+            return
+        print(f"Uploading pointcloud from {args.pointcloud}...")
+        client.upload_pointcloud_chunked(job_id, args.pointcloud)
+
+    if args.mode == 'pointcloud_only':
+        if not args.dataset_path:
+            print("pointcloud_only mode requires --dataset-path <server dataset path>")
+            return
     
     # Загрузить изображения
-    print(f"\nUploading images from {args.images}...")
-    client.upload_directory(job_id, args.images)
+    if args.mode in ['colmap_images', 'hybrid_colmap_pointcloud']:
+        if not args.images:
+            print("This mode requires --images <path_to_images>")
+            return
+        print(f"\nUploading images from {args.images}...")
+        client.upload_directory(job_id, args.images)
     
     # Завершить загрузку
-    print("\nCompleting upload and starting processing...")
-    client.complete_upload(job_id)
+    if args.mode in ['colmap_images', 'hybrid_colmap_pointcloud']:
+        print("\nCompleting upload and starting processing...")
+        client.complete_upload(job_id)
+    else:
+        print("\nStarting pointcloud_only processing...")
+        client.start_job(job_id, training_mode='pointcloud_only', dataset_path=args.dataset_path)
     
     # Ждать завершения
     print("\nWaiting for completion...")

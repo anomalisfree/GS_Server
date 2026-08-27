@@ -5,7 +5,7 @@ Data models for API
 from enum import Enum
 from datetime import datetime
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class JobStatus(str, Enum):
@@ -30,6 +30,14 @@ class ColmapStage(str, Enum):
     FEATURE_MATCHING = "feature_matching"  
     SPARSE_RECONSTRUCTION = "sparse_reconstruction"
     IMAGE_UNDISTORTION = "image_undistortion"
+
+
+class TrainingMode(str, Enum):
+    """Training mode selection"""
+    COLMAP_IMAGES = "colmap_images"
+    POINTCLOUD_ONLY = "pointcloud_only"
+    HYBRID_COLMAP_POINTCLOUD = "hybrid_colmap_pointcloud"
+    HYBRID_KNOWN_POSES = "hybrid_known_poses"
 
 
 class TrainingProgress(BaseModel):
@@ -101,9 +109,67 @@ class CreateJobRequest(BaseModel):
     # Переопределения настроек (опционально)
     colmap_config: Optional[Dict[str, Any]] = None
     brush_config: Optional[Dict[str, Any]] = None
+    training_mode: Optional[TrainingMode] = Field(
+        default=None,
+        description=(
+            "Training mode. colmap_images = full COLMAP+Brush, "
+            "pointcloud_only = train directly from prepared dataset_path, "
+            "hybrid_colmap_pointcloud = COLMAP-estimated cameras + external points3d.ply, "
+            "hybrid_known_poses = use dataset_path's known poses directly (no COLMAP pose "
+            "estimation), triangulate additional points via COLMAP and merge with the "
+            "dataset's own points3d.ply — for scenes where COLMAP can't reliably estimate "
+            "poses from images alone (e.g. low-texture surfaces) but accurate poses are "
+            "already known from another source (e.g. LiDAR/IMU tracking)"
+        )
+    )
+    pointcloud_path: Optional[str] = Field(
+        default=None,
+        description="Server-side absolute path to external points3d.ply (for hybrid mode)"
+    )
+    skip_colmap: bool = False
+    dataset_path: Optional[str] = Field(
+        default=None,
+        description="Server-side path to prepared Nerfstudio/COLMAP-compatible dataset (required for pointcloud_only)"
+    )
     
     # Автозапуск после загрузки
     auto_start: bool = True
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "scene_colmap",
+                    "training_mode": "colmap_images",
+                    "auto_start": True,
+                    "brush_config": {
+                        "total_steps": 30000,
+                        "max_resolution": 1024
+                    }
+                },
+                {
+                    "name": "scene_pointcloud_only",
+                    "training_mode": "pointcloud_only",
+                    "dataset_path": "/data/uploads/NewScan",
+                    "auto_start": True,
+                    "brush_config": {
+                        "total_steps": 30000,
+                        "max_resolution": 1024
+                    }
+                },
+                {
+                    "name": "scene_hybrid",
+                    "training_mode": "hybrid_colmap_pointcloud",
+                    "auto_start": False,
+                    "pointcloud_path": "/data/shared/points3d_downsampled.ply",
+                    "brush_config": {
+                        "total_steps": 30000,
+                        "max_resolution": 1024
+                    }
+                }
+            ]
+        }
+    )
 
 
 class CreateJobResponse(BaseModel):
@@ -131,8 +197,41 @@ class UploadProgressResponse(BaseModel):
 
 class StartTrainingRequest(BaseModel):
     """Request to start training"""
+    training_mode: Optional[TrainingMode] = Field(
+        default=None,
+        description="Optional mode override before manual start"
+    )
+    pointcloud_path: Optional[str] = Field(
+        default=None,
+        description="Optional server-side points3d.ply path override (used by hybrid mode)"
+    )
     skip_colmap: bool = False  # Пропустить COLMAP если данные уже готовы
+    dataset_path: Optional[str] = Field(
+        default=None,
+        description="Optional prepared dataset path override (used by pointcloud_only mode)"
+    )
     brush_config: Optional[Dict[str, Any]] = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "training_mode": "pointcloud_only",
+                    "dataset_path": "/data/uploads/NewScan"
+                },
+                {
+                    "training_mode": "hybrid_colmap_pointcloud",
+                    "pointcloud_path": "/data/jobs/<job_id>/inputs/points3d.ply"
+                },
+                {
+                    "brush_config": {
+                        "total_steps": 20000,
+                        "max_resolution": 1280
+                    }
+                }
+            ]
+        }
+    )
 
 
 class ModelInfo(BaseModel):

@@ -1,0 +1,59 @@
+# docker-compose.yml – local development & testing
+#
+# Usage:
+#   docker compose up --build          # first run
+#   docker compose up -d               # background
+#   docker compose logs -f gs-server   # follow logs
+#   docker compose down                # stop
+#
+# GPU passthrough requires nvidia-container-toolkit:
+#   https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+
+services:
+  gs-server:
+    build: .
+    image: gs-server:latest
+    container_name: gs-server
+    restart: unless-stopped
+
+    # GPU passthrough (NVIDIA)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, compute, video, graphics, utility]
+
+    ports:
+      - "8080:8080"
+
+    volumes:
+      # Persistent data: jobs, uploads, models survive container restarts
+      - gs-data:/data
+      # (Optional) mount local source for live editing without rebuild:
+      # - ./gs_server:/app/gs_server
+
+    environment:
+      GS_HOST: "0.0.0.0"
+      GS_PORT: "8080"
+      GS_JOBS_DIR: "/data/jobs"
+      GS_UPLOADS_DIR: "/data/uploads"
+      GS_MODELS_DIR: "/data/models"
+      GS_COLMAP_EXE: "/usr/bin/colmap"
+      GS_BRUSH_EXE: "/usr/local/bin/brush"
+      COLMAP_USE_GPU: "true"
+      MASKING_ENABLED: "true"
+      BRUSH_TOTAL_STEPS: "30000"
+      BRUSH_MAX_RESOLUTION: "1920"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  gs-data:
+    driver: local

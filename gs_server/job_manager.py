@@ -15,7 +15,7 @@ import aiofiles.os
 
 from .models import (
     JobStatus, JobInfo, JobProgress, ColmapProgress, 
-    TrainingProgress, ColmapStage, WebSocketMessage
+    TrainingProgress, ColmapStage, WebSocketMessage, TrainingMode
 )
 from .config import get_config
 
@@ -184,6 +184,10 @@ class JobManager:
         name: str, 
         colmap_config: Optional[dict] = None,
         brush_config: Optional[dict] = None,
+        training_mode: TrainingMode = TrainingMode.COLMAP_IMAGES,
+        pointcloud_path: Optional[str] = None,
+        skip_colmap: bool = False,
+        dataset_path: Optional[str] = None,
         auto_start: bool = True
     ) -> Job:
         """Create a new job"""
@@ -200,6 +204,10 @@ class JobManager:
             config={
                 "colmap": colmap_config or {},
                 "brush": brush_config or {},
+                "training_mode": training_mode.value,
+                "pointcloud_path": pointcloud_path,
+                "skip_colmap": skip_colmap,
+                "dataset_path": dataset_path,
                 "auto_start": auto_start
             }
         )
@@ -454,11 +462,13 @@ class JobManager:
         from .colmap_runner import ColmapRunner
         from .brush_runner import BrushRunner
         from .mask_generator import MaskGenerator
+        from .known_pose_triangulation import KnownPoseTriangulator
         from .utils import normalize_exif_orientation
-        
+
         colmap = ColmapRunner(self)
         brush = BrushRunner(self)
         mask_gen = MaskGenerator(self)
+        known_pose_triangulator = KnownPoseTriangulator(self)
         masking_enabled = get_config().masking.enabled
         
         while True:
@@ -472,9 +482,38 @@ class JobManager:
                 async with self._processing_lock:
                     try:
                         job.started_at = datetime.utcnow()
-                        
+
+                        # Resolve mode with backward compatibility.
+                        mode_raw = job.config.get("training_mode")
+                        if mode_raw:
+                            training_mode = TrainingMode(mode_raw)
+                        else:
+                            training_mode = (
+                                TrainingMode.POINTCLOUD_ONLY
+                                if bool(job.config.get("skip_colmap", False))
+                                else TrainingMode.COLMAP_IMAGES
+                            )
+
+                        skip_colmap = training_mode in (
+                            TrainingMode.POINTCLOUD_ONLY, TrainingMode.HYBRID_KNOWN_POSES
+                        )
+                        prepared_dataset_path = job.config.get("dataset_path")
+                        pointcloud_path = job.config.get("pointcloud_path")
+
+                        if training_mode == TrainingMode.POINTCLOUD_ONLY and not prepared_dataset_path:
+                            await self.mark_failed(job_id, "pointcloud_only mode requires dataset_path")
+                            continue
+
+                        if training_mode == TrainingMode.HYBRID_KNOWN_POSES and not prepared_dataset_path:
+                            await self.mark_failed(job_id, "hybrid_known_poses mode requires dataset_path")
+                            continue
+
+                        if training_mode == TrainingMode.HYBRID_COLMAP_POINTCLOUD and not pointcloud_path:
+                            await self.mark_failed(job_id, "hybrid_colmap_pointcloud mode requires pointcloud_path")
+                            continue
+
                         # Stage 0a: Normalize EXIF orientation in uploaded images
-                        if job.status in [JobStatus.UPLOADED, JobStatus.PENDING]:
+                        if job.status in [JobStatus.UPLOADED, JobStatus.PENDING] and not skip_colmap:
                             await self.update_job_progress(
                                 job_id,
                                 message="Normalizing image orientations...",
@@ -484,20 +523,49 @@ class JobManager:
                             fixed = await loop.run_in_executor(
                                 None, normalize_exif_orientation, job.images_dir
                             )
-                        
+
                         # Stage 0b: Generate masks (if enabled)
-                        if job.status in [JobStatus.UPLOADED, JobStatus.PENDING]:
+                        if job.status in [JobStatus.UPLOADED, JobStatus.PENDING] and not skip_colmap:
                             job_mask_enabled = job.config.get("masking", {}).get("enabled", masking_enabled)
                             if job_mask_enabled:
                                 masks_dir = await mask_gen.run(job)
                                 job.config["_masks_dir"] = str(masks_dir)
-                        
+
                         # Stage 1: COLMAP (if needed)
                         if job.status in [JobStatus.UPLOADED, JobStatus.PENDING]:
-                            await colmap.run(job)
-                            
-                            if job.status == JobStatus.COLMAP_FAILED:
-                                continue
+                            if training_mode == TrainingMode.HYBRID_KNOWN_POSES:
+                                ok = await known_pose_triangulator.run(job, Path(prepared_dataset_path))
+                                if not ok:
+                                    continue
+                            elif skip_colmap:
+                                await self.update_job_progress(
+                                    job_id,
+                                    status=JobStatus.COLMAP_DONE,
+                                    message="Skipping COLMAP: using prepared dataset",
+                                    overall_progress=50.0,
+                                )
+                            else:
+                                await colmap.run(job)
+
+                                if job.status == JobStatus.COLMAP_FAILED:
+                                    continue
+
+                                if training_mode == TrainingMode.HYBRID_COLMAP_POINTCLOUD:
+                                    source_path = Path(pointcloud_path)
+                                    if not source_path.exists():
+                                        await self.mark_failed(job_id, f"Point cloud file not found: {source_path}")
+                                        continue
+
+                                    dense_dir = job.colmap_dir / "dense"
+                                    dense_dir.mkdir(parents=True, exist_ok=True)
+                                    dest_path = dense_dir / "points3d.ply"
+                                    shutil.copy2(source_path, dest_path)
+
+                                    await self.update_job_progress(
+                                        job_id,
+                                        message=f"Hybrid mode: external point cloud injected ({source_path.name})",
+                                        overall_progress=50.0,
+                                    )
                         
                         # Stage 2: Brush training
                         if job.status == JobStatus.COLMAP_DONE:

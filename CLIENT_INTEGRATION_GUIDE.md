@@ -2,8 +2,22 @@
 
 ## Client Application Integration with GS Server
 
-**Server Address:** `http://192.168.1.14:8080`  
-**WebSocket:** `ws://192.168.1.14:8080`
+**Server Address (current):** `http://136.64.198.146:8080`  
+**WebSocket (current):** `ws://136.64.198.146:8080`
+
+> Note: the server IP is environment-dependent and may change. Do not hardcode it in production clients. Keep Base URL in config/env and update without rebuilding the app.
+
+## Training Mode Selection (New)
+
+The API now supports explicit mode selection via `training_mode` in `POST /jobs` and `POST /jobs/{job_id}/start`:
+
+- `colmap_images` - image upload + full COLMAP + Brush
+- `pointcloud_only` - direct Brush from `dataset_path` (without COLMAP)
+- `hybrid_colmap_pointcloud` - COLMAP from images + external `points3d.ply`
+
+For full developer integration details (validation rules, endpoint payloads, and complete flows), see:
+
+- `CLIENT_TRAINING_MODES_DEVELOPER_GUIDE.md`
 
 ---
 
@@ -74,7 +88,7 @@ import json
 class GSClient:
     """Client for GS Server"""
     
-    def __init__(self, server_url: str = "http://192.168.1.14:8080"):
+    def __init__(self, server_url: str = "http://136.64.198.146:8080"):
         self.base_url = server_url.rstrip('/')
         self.ws_url = server_url.replace('http://', 'ws://').replace('https://', 'wss://')
         self.timeout = 30
@@ -342,7 +356,7 @@ def main():
     """Complete workflow example"""
     
     # Initialize client
-    client = GSClient("http://192.168.1.14:8080")
+    client = GSClient("http://136.64.198.146:8080")
     
     # Check connection
     if not client.check_connection():
@@ -460,7 +474,7 @@ from typing import Callable, Optional
 class AsyncGSClient:
     """Async client for GS Server"""
     
-    def __init__(self, server_url: str = "http://192.168.1.14:8080"):
+    def __init__(self, server_url: str = "http://136.64.198.146:8080"):
         self.base_url = server_url.rstrip('/')
         self.ws_url = server_url.replace('http://', 'ws://')
         
@@ -537,7 +551,7 @@ class AsyncGSClient:
 async def main_async():
     """Async example with WebSocket"""
     
-    client = AsyncGSClient("http://192.168.1.14:8080")
+    client = AsyncGSClient("http://136.64.198.146:8080")
     
     # Create job
     job = await client.create_job("my_scene", total_steps=30000)
@@ -598,7 +612,7 @@ public class GSClient
     private readonly string _baseUrl;
     private readonly HttpClient _httpClient;
     
-    public GSClient(string serverUrl = "http://192.168.1.14:8080")
+    public GSClient(string serverUrl = "http://136.64.198.146:8080")
     {
         _baseUrl = serverUrl.TrimEnd('/');
         _httpClient = new HttpClient();
@@ -845,7 +859,7 @@ public class GSClient
  */
 
 class GSClient {
-    constructor(serverUrl = 'http://192.168.1.14:8080') {
+    constructor(serverUrl = 'http://136.64.198.146:8080') {
         this.baseUrl = serverUrl.replace(/\/$/, '');
         this.wsUrl = this.baseUrl.replace('http://', 'ws://').replace('https://', 'wss://');
     }
@@ -963,13 +977,13 @@ class GSClient {
 ### Check Server
 
 ```bash
-curl http://192.168.1.14:8080/status
+curl http://136.64.198.146:8080/status
 ```
 
 ### Create Job
 
 ```bash
-curl -X POST http://192.168.1.14:8080/jobs \
+curl -X POST http://136.64.198.146:8080/jobs \
   -H "Content-Type: application/json" \
   -d '{"name": "my_scene", "auto_start": true, "brush_config": {"total_steps": 30000}}'
 ```
@@ -977,7 +991,7 @@ curl -X POST http://192.168.1.14:8080/jobs \
 ### Upload Images
 
 ```bash
-curl -X POST http://192.168.1.14:8080/jobs/JOB_ID/upload \
+curl -X POST http://136.64.198.146:8080/jobs/JOB_ID/upload \
   -F "files=@image1.jpg" \
   -F "files=@image2.jpg"
 ```
@@ -985,19 +999,19 @@ curl -X POST http://192.168.1.14:8080/jobs/JOB_ID/upload \
 ### Complete Upload
 
 ```bash
-curl -X POST http://192.168.1.14:8080/jobs/JOB_ID/upload/complete
+curl -X POST http://136.64.198.146:8080/jobs/JOB_ID/upload/complete
 ```
 
 ### Get Progress
 
 ```bash
-curl http://192.168.1.14:8080/jobs/JOB_ID/progress
+curl http://136.64.198.146:8080/jobs/JOB_ID/progress
 ```
 
 ### Download Model
 
 ```bash
-curl -o model.ply http://192.168.1.14:8080/jobs/JOB_ID/model
+curl -o model.ply http://136.64.198.146:8080/jobs/JOB_ID/model
 ```
 
 ---
@@ -1066,5 +1080,5 @@ curl -o model.ply http://192.168.1.14:8080/jobs/JOB_ID/model
 
 ## Support
 
-- API Docs: http://192.168.1.14:8080/docs
-- Status: http://192.168.1.14:8080/status
+- API Docs: http://136.64.198.146:8080/docs
+- Status: http://136.64.198.146:8080/status

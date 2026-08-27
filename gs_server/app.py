@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional, List
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, WebSocket, WebSocketDisconnect, Body
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import aiofiles
@@ -19,7 +19,7 @@ from .config import get_config, AppConfig
 from .models import (
     JobStatus, JobInfo, JobProgress, CreateJobRequest, CreateJobResponse,
     JobListResponse, UploadProgressResponse, StartTrainingRequest,
-    ModelInfo, ServerStatus, WebSocketMessage
+    ModelInfo, ServerStatus, WebSocketMessage, TrainingMode
 )
 from .job_manager import get_job_manager, JobManager
 from . import __version__
@@ -64,6 +64,18 @@ app.add_middleware(
 )
 
 
+def _resolve_training_mode(
+    explicit_mode: Optional[TrainingMode],
+    skip_colmap: bool,
+) -> TrainingMode:
+    """Resolve training mode with backward compatibility for skip_colmap."""
+    if explicit_mode is not None:
+        return explicit_mode
+    if skip_colmap:
+        return TrainingMode.POINTCLOUD_ONLY
+    return TrainingMode.COLMAP_IMAGES
+
+
 # ============== API Endpoints ==============
 
 @app.get("/", tags=["Info"])
@@ -104,17 +116,38 @@ async def get_server_status():
 # ============== Jobs API ==============
 
 @app.post("/jobs", response_model=CreateJobResponse, tags=["Jobs"])
-async def create_job(request: CreateJobRequest):
-    """Создать новую задачу"""
+async def create_job(
+    request: CreateJobRequest = Body(
+        ...,
+        description=(
+            "Create a training job and choose one of the supported training modes: "
+            "colmap_images, pointcloud_only, hybrid_colmap_pointcloud."
+        )
+    )
+):
+    """Создать новую задачу с явным выбором training mode"""
     job_manager = get_job_manager()
     config = get_config()
     
+    training_mode = _resolve_training_mode(request.training_mode, request.skip_colmap)
+
     job = await job_manager.create_job(
         name=request.name,
         colmap_config=request.colmap_config,
         brush_config=request.brush_config,
+        training_mode=training_mode,
+        pointcloud_path=request.pointcloud_path,
+        skip_colmap=request.skip_colmap,
+        dataset_path=request.dataset_path,
         auto_start=request.auto_start
     )
+
+    if (
+        request.auto_start
+        and training_mode in (TrainingMode.POINTCLOUD_ONLY, TrainingMode.HYBRID_KNOWN_POSES)
+        and request.dataset_path
+    ):
+        await job_manager.start_processing(job.job_id)
     
     base_url = f"http://{config.server.host}:{config.server.port}"
     
@@ -228,8 +261,17 @@ async def restart_job(job_id: str):
 
 
 @app.post("/jobs/{job_id}/start", tags=["Jobs"])
-async def start_job(job_id: str, request: Optional[StartTrainingRequest] = None):
-    """Запустить обработку задачи вручную"""
+async def start_job(
+    job_id: str,
+    request: Optional[StartTrainingRequest] = Body(
+        default=None,
+        description=(
+            "Optionally override mode/paths/brush settings before manual start. "
+            "Useful for pointcloud_only and hybrid_colmap_pointcloud flows."
+        )
+    )
+):
+    """Запустить обработку задачи вручную (с optional overrides)"""
     job_manager = get_job_manager()
     
     job = await job_manager.get_job(job_id)
@@ -237,8 +279,19 @@ async def start_job(job_id: str, request: Optional[StartTrainingRequest] = None)
         raise HTTPException(status_code=404, detail="Job not found")
     
     # Обновить конфиг если передан
-    if request and request.brush_config:
-        job.config["brush"] = {**job.config.get("brush", {}), **request.brush_config}
+    if request:
+        if request.training_mode is not None:
+            job.config["training_mode"] = request.training_mode.value
+            job.config["skip_colmap"] = request.training_mode == TrainingMode.POINTCLOUD_ONLY
+        if request.brush_config:
+            job.config["brush"] = {**job.config.get("brush", {}), **request.brush_config}
+        if request.skip_colmap:
+            job.config["skip_colmap"] = True
+            job.config["training_mode"] = TrainingMode.POINTCLOUD_ONLY.value
+        if request.dataset_path:
+            job.config["dataset_path"] = request.dataset_path
+        if request.pointcloud_path:
+            job.config["pointcloud_path"] = request.pointcloud_path
     
     success = await job_manager.start_processing(job_id)
     if not success:
@@ -305,6 +358,108 @@ async def upload_images(
         "uploaded": uploaded_count,
         "total_images": total_images,
         "total_size_bytes": total_size
+    }
+
+
+@app.post("/jobs/{job_id}/pointcloud", tags=["Upload"])
+async def upload_pointcloud(
+    job_id: str,
+    file: UploadFile = File(
+        ...,
+        description="External points3d.ply file for hybrid_colmap_pointcloud mode"
+    )
+):
+    """Upload external points3d.ply for hybrid mode."""
+    job_manager = get_job_manager()
+
+    job = await job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    filename = Path(file.filename).name
+    if Path(filename).suffix.lower() != ".ply":
+        raise HTTPException(status_code=400, detail="Only .ply point cloud is supported")
+
+    inputs_dir = job.job_dir / "inputs"
+    inputs_dir.mkdir(parents=True, exist_ok=True)
+    final_path = inputs_dir / "points3d.ply"
+
+    total_size = 0
+    async with aiofiles.open(final_path, "wb") as f:
+        while chunk := await file.read(1024 * 1024):
+            await f.write(chunk)
+            total_size += len(chunk)
+
+    job.config["pointcloud_path"] = str(final_path)
+    await job_manager.update_job_progress(
+        job_id,
+        message=f"Point cloud uploaded: {filename} ({total_size} bytes)"
+    )
+
+    return {
+        "status": "pointcloud_uploaded",
+        "filename": filename,
+        "saved_as": str(final_path),
+        "size_bytes": total_size
+    }
+
+
+@app.post("/jobs/{job_id}/pointcloud/chunk", tags=["Upload"])
+async def upload_pointcloud_chunk(
+    job_id: str,
+    filename: str = Form(..., description="Original point cloud filename, must have .ply extension"),
+    chunk_index: int = Form(..., description="Zero-based chunk index"),
+    total_chunks: int = Form(..., description="Total number of chunks in this upload"),
+    chunk: UploadFile = File(..., description="Binary payload for this chunk")
+):
+    """Upload external point cloud in chunks for hybrid mode."""
+    job_manager = get_job_manager()
+
+    job = await job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if Path(filename).suffix.lower() != ".ply":
+        raise HTTPException(status_code=400, detail="Only .ply point cloud is supported")
+
+    chunks_dir = job.job_dir / "chunks" / "pointcloud"
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+
+    chunk_path = chunks_dir / f"{chunk_index:06d}"
+    async with aiofiles.open(chunk_path, 'wb') as f:
+        await f.write(await chunk.read())
+
+    chunks = list(chunks_dir.glob('*'))
+    if len(chunks) == total_chunks:
+        inputs_dir = job.job_dir / "inputs"
+        inputs_dir.mkdir(parents=True, exist_ok=True)
+        final_path = inputs_dir / "points3d.ply"
+
+        async with aiofiles.open(final_path, 'wb') as f:
+            for i in range(total_chunks):
+                chunk_file = chunks_dir / f"{i:06d}"
+                async with aiofiles.open(chunk_file, 'rb') as cf:
+                    await f.write(await cf.read())
+
+        shutil.rmtree(chunks_dir)
+
+        job.config["pointcloud_path"] = str(final_path)
+        await job_manager.update_job_progress(
+            job_id,
+            message=f"Point cloud uploaded in chunks: {filename}"
+        )
+
+        return {
+            "status": "complete",
+            "filename": filename,
+            "saved_as": str(final_path)
+        }
+
+    return {
+        "status": "chunk_received",
+        "chunk_index": chunk_index,
+        "received_chunks": len(chunks),
+        "total_chunks": total_chunks
     }
 
 

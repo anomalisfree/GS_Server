@@ -48,6 +48,15 @@ jobs/
 uploads/
 models/
 
+# Local scan data / prepared datasets / scratch analysis output (large, local-only)
+/data/
+/data_prepared/
+/scratchpad/
+scratchpad_*
+
+# Claude Code local (per-machine) settings
+.claude/settings.local.json
+
 # Temporary files
 *.tmp
 *.temp

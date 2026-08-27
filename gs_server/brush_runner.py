@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Optional
 
 from .models import JobStatus, TrainingProgress
 from .config import get_config
+from .floater_filter import filter_needle_floaters
 
 if TYPE_CHECKING:
     from .job_manager import JobManager, Job
@@ -32,17 +33,22 @@ class BrushRunner:
         job_id = job.job_id
         colmap_dir = job.colmap_dir
         output_dir = job.output_dir
-        
-        # Определить путь к данным COLMAP
-        # Brush принимает либо dense/sparse, либо undistorted images
-        dataset_path = colmap_dir / "dense"
-        if not dataset_path.exists():
-            dataset_path = colmap_dir / "sparse" / "0"
-        if not dataset_path.exists():
-            dataset_path = colmap_dir / "sparse"
+
+        # Для режима без COLMAP можно передать готовый датасет напрямую
+        dataset_override = job.config.get("dataset_path")
+        if dataset_override:
+            dataset_path = Path(dataset_override)
+        else:
+            # Определить путь к данным COLMAP
+            # Brush принимает либо dense/sparse, либо undistorted images
+            dataset_path = colmap_dir / "dense"
+            if not dataset_path.exists():
+                dataset_path = colmap_dir / "sparse" / "0"
+            if not dataset_path.exists():
+                dataset_path = colmap_dir / "sparse"
             
         if not dataset_path.exists():
-            await self._job_manager.mark_failed(job_id, "COLMAP data not found")
+            await self._job_manager.mark_failed(job_id, f"Dataset path not found: {dataset_path}")
             return
         
         # Настройки тренировки
@@ -73,14 +79,24 @@ class BrushRunner:
         
         try:
             # Собрать команду - используем собранный exe напрямую
-            brush_exe = self._brush_dir / "target" / "release" / "brush.exe"
-            if not brush_exe.exists():
-                # Fallback на cargo run если exe не найден
-                brush_exe = None
-            
-            if brush_exe:
+            # Сначала проверяем явно заданный путь из конфига (GS_BRUSH_EXE)
+            explicit_exe = self._config.paths.brush_exe
+            if explicit_exe and explicit_exe.exists():
+                resolved_exe = explicit_exe
+            else:
+                # Fallback: ищем binary в brush_dir/target/release/
+                # На Windows – brush.exe, на Linux – brush
+                for candidate in ("brush.exe", "brush"):
+                    p = self._brush_dir / "target" / "release" / candidate
+                    if p.exists():
+                        resolved_exe = p
+                        break
+                else:
+                    resolved_exe = None
+
+            if resolved_exe:
                 cmd = [
-                    str(brush_exe),
+                    str(resolved_exe),
                     str(dataset_path),
                 ]
             else:
@@ -90,7 +106,7 @@ class BrushRunner:
                 ]
             
             cmd.extend([
-                "--total-train-iters", str(total_steps),
+                "--total-steps", str(total_steps),
                 "--max-resolution", str(max_resolution),
                 "--eval-every", str(eval_every),
                 "--export-every", str(export_every),
@@ -118,9 +134,11 @@ class BrushRunner:
                 "--growth-grad-threshold",   str(growth_grad),
                 "--growth-select-fraction",  str(growth_frac),
                 "--growth-stop-iter",        str(growth_stop),
-                "--opac-decay",              str(opac_decay),
-                "--scale-decay",             str(scale_decay),
                 "--ssim-weight",             str(ssim_weight),
+                # Brush's real flag names/units for what this config calls opac_decay/
+                # scale_decay — previously never passed at all, see config.py note.
+                "--opac-loss-weight",        str(opac_decay),
+                "--scale-loss-weight",       str(scale_decay),
             ])
             
             # Устанавливаем переменные окружения для отключения интерактивного вывода
@@ -130,7 +148,9 @@ class BrushRunner:
                 "TERM": "dumb",  # Отключает цветной/интерактивный вывод
                 "NO_COLOR": "1",  # Некоторые программы используют это
                 "CI": "1",  # Некоторые программы отключают интерактивный режим в CI
-                "RUST_LOG": "brush_cli=info,brush_train=info,info",  # Включаем info логи для brush модулей
+                # Не включаем глобальный info, иначе некоторые модули печатают
+                # очень длинные строки (device features), которые ломают readline.
+                "RUST_LOG": "warn,brush_cli=info,brush_train=info,brush_process=info,brush_dataset=info",
                 "RUST_BACKTRACE": "1",  # Для отладки ошибок
             })
             
@@ -143,8 +163,9 @@ class BrushRunner:
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
-                cwd=str(self._brush_dir),
-                env=env
+                cwd=str(output_dir),  # Run from output dir — brush_dir may not exist on server
+                env=env,
+                limit=8 * 1024 * 1024,
             )
             
             start_time = time.time()
@@ -309,8 +330,27 @@ class BrushRunner:
             
             await process.wait()
             
+            # Check if training completed successfully by looking for exported models.
+            # Brush sometimes crashes (SIGSEGV, code -11) during WGPU/Vulkan shutdown
+            # AFTER the final model is already exported — this is still a success.
+            model_files = sorted(output_dir.glob("model_*.ply"), reverse=True)
+            last_exported_step = 0
+            if model_files:
+                m = re.search(r'model_0*(\d+)\.ply', model_files[0].name)
+                if m:
+                    last_exported_step = int(m.group(1))
+
             if process.returncode != 0:
-                raise RuntimeError(f"Brush training failed with code {process.returncode}")
+                is_signal_crash = process.returncode < 0  # negative = killed by OS signal
+                model_complete = last_exported_step >= int(total_steps * 0.9)  # ≥90% done
+                if is_signal_crash and model_complete:
+                    logger.warning(
+                        f"Brush exited with signal {-process.returncode} after exporting "
+                        f"model at step {last_exported_step}/{total_steps} — treating as success"
+                    )
+                    print(f"[BRUSH] Signal crash after export at step {last_exported_step} — OK")
+                else:
+                    raise RuntimeError(f"Brush training failed with code {process.returncode}")
             
             # Найти финальную модель
             final_model = None
@@ -324,7 +364,33 @@ class BrushRunner:
             
             if not final_model:
                 raise RuntimeError("Model was not exported")
-            
+
+            # Убрать needle-выбросы на краях объекта (см. floater_filter.py) —
+            # хирургически, в отличие от opac/scale decay, который не снижает
+            # анизотропию выживших гауссианов, а просто прорежает их количество.
+            floater_enabled = job_brush_config.get("floater_filter_enabled", brush_config.floater_filter_enabled)
+            if floater_enabled:
+                aniso_threshold = job_brush_config.get(
+                    "floater_filter_aniso_threshold", brush_config.floater_filter_aniso_threshold
+                )
+                size_multiplier = job_brush_config.get(
+                    "floater_filter_size_multiplier", brush_config.floater_filter_size_multiplier
+                )
+                filtered_path = Path(final_model).with_name(Path(final_model).stem + "_filtered.ply")
+                try:
+                    stats = filter_needle_floaters(final_model, str(filtered_path), aniso_threshold, size_multiplier)
+                    if not stats.get("skipped"):
+                        print(
+                            f"[BRUSH] Floater filter removed {stats['removed_count']} "
+                            f"({stats['removed_pct']}%) needle splats "
+                            f"(median splat size {stats['median_maxdim']:.4f}, "
+                            f"threshold {stats['effective_min_size']:.4f})"
+                        )
+                        final_model = str(filtered_path)
+                        final_size = filtered_path.stat().st_size
+                except Exception as e:
+                    logger.warning(f"Floater filter failed, keeping unfiltered model: {e}")
+
             # Обновить финальный прогресс тренировки
             await self._job_manager.update_job_progress(
                 job_id,

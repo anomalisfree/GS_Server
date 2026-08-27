@@ -47,7 +47,14 @@ GS_HOST=0.0.0.0 GS_PORT=8080 python -m gs_server
 | `GS_COLMAP_EXE` | Path to COLMAP | `../colmap/bin/colmap.exe` |
 | `GS_BRUSH_DIR` | Path to Brush | `../brush` |
 | `COLMAP_USE_GPU` | Use GPU for COLMAP | `true` |
-| `MASKING_ENABLED` | Enable semantic masking | `true` |
+| `COLMAP_CAMERA_MODEL` | Camera model for ImageReader | `SIMPLE_RADIAL` |
+| `COLMAP_SINGLE_CAMERA` | Force one shared camera intrinsics | `false` |
+| `COLMAP_MAX_IMAGE_SIZE` | Max image size for SIFT extraction | `4500` |
+| `COLMAP_SIFT_MAX_FEATURES` | Max SIFT features per image | `32768` |
+| `COLMAP_MATCHER_TYPE` | Default matcher: exhaustive, sequential, spatial, vocab_tree | `exhaustive` |
+| `COLMAP_SEQUENTIAL_LOOP_DETECTION` | Enable vocab-tree loop closure for sequential matcher | `false` |
+| `COLMAP_VOCAB_TREE_PATH` | Path to a COLMAP vocab-tree `.bin` (required for loop detection) | unset |
+| `MASKING_ENABLED` | Enable semantic masking | `false` |
 | `MASKING_REMOVE_CLASSES` | Comma-separated classes to mask | `bicycle,bus,car,cat,dog,motorbike,person` |
 | `BRUSH_TOTAL_STEPS` | Training steps | `30000` |
 | `BRUSH_MAX_RESOLUTION` | Max resolution | `1920` |
@@ -210,13 +217,30 @@ gs_server/
 {
     "colmap_config": {
         "use_gpu": true,
-        "camera_model": "OPENCV",
-        "single_camera": true,
-        "max_image_size": 3200,
-        "matcher_type": "exhaustive"
+        "camera_model": "SIMPLE_RADIAL",
+        "single_camera": false,
+        "max_image_size": 4500,
+        "matcher_type": "exhaustive",
+        "sequential_loop_detection": false
     }
 }
 ```
+
+All keys inside `colmap_config` are per-job overrides of the server's global `COLMAP_*` env vars/defaults —
+pass only the keys you want to change.
+
+`matcher_type` controls how COLMAP pairs images for feature matching:
+
+| Value | Cost | When to use |
+|---|---|---|
+| `exhaustive` (default) | O(n²) pairs — slow for large sets | Unordered/scattered photo collections with no capture-order metadata |
+| `sequential` | ~O(n) — much faster | Frames from a continuous walked/driven/flown capture, uploaded in capture order (e.g. video-extracted frames, `SensorFrame_00000, 00001, ...`) |
+| `spatial` | Needs GPS/geotags | Geotagged aerial/drone captures |
+| `vocab_tree` | Needs a vocab-tree file | Large unordered sets where exhaustive is too slow |
+
+For `sequential`, set `"sequential_loop_detection": true` to additionally close trajectory loops (the operator
+returning near a earlier position) via vocab-tree matching — this requires `COLMAP_VOCAB_TREE_PATH` to be
+configured on the server; if it isn't, loop detection is silently skipped and plain sequential matching is used.
 
 ## Masking Settings
 
@@ -227,7 +251,7 @@ Supported classes (VOC): `aeroplane`, `bicycle`, `bird`, `boat`, `bottle`, `bus`
 ```json
 {
     "masking_config": {
-        "enabled": true,
+        "enabled": false,
         "remove_classes": ["bicycle", "bus", "car", "cat", "dog", "motorbike", "person"]
     }
 }

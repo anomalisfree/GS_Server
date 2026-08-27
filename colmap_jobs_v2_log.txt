@@ -1,0 +1,92 @@
+
+======================================================================
+C_Deck_FWD  (1814 images)
+======================================================================
+  job_id=45ec5d06-29d4-42a5-b3f8-630c515269b2
+  uploaded 40/1814  uploaded 80/1814  uploaded 120/1814  uploaded 160/1814  uploaded 200/1814  uploaded 240/1814  uploaded 280/1814  uploaded 320/1814  uploaded 360/1814  uploaded 400/1814  uploaded 440/1814  uploaded 480/1814  uploaded 520/1814  uploaded 560/1814  uploaded 600/1814  uploaded 640/1814  uploaded 680/1814  uploaded 720/1814  uploaded 760/1814  uploaded 800/1814  uploaded 840/1814  uploaded 880/1814  uploaded 920/1814  uploaded 960/1814  uploaded 1000/1814  uploaded 1040/1814  uploaded 1080/1814  uploaded 1120/1814  uploaded 1160/1814  uploaded 1200/1814  uploaded 1240/1814  uploaded 1280/1814  uploaded 1320/1814  uploaded 1360/1814  uploaded 1400/1814  uploaded 1440/1814  uploaded 1480/1814  uploaded 1520/1814  uploaded 1560/1814  uploaded 1600/1814  uploaded 1640/1814  uploaded 1680/1814  uploaded 1720/1814  uploaded 1760/1814  uploaded 1800/1814  uploaded 1814/1814
+  upload/complete: {'status': 'upload_complete', 'images_count': 1814, 'total_size_bytes': 655235105}
+
+======================================================================
+D_Deck_FWD_Section_1_Front_Tip  (660 images)
+======================================================================
+  job_id=657a4cae-281f-42aa-b836-7c86c74723b7
+  uploaded 40/660  uploaded 80/660  uploaded 120/660  uploaded 160/660  uploaded 200/660  uploaded 240/660  uploaded 280/660  uploaded 320/660  uploaded 360/660  uploaded 400/660  uploaded 440/660  uploaded 480/660  uploaded 520/660  uploaded 560/660  uploaded 600/660  uploaded 640/660  uploaded 660/660
+  upload/complete: {'status': 'upload_complete', 'images_count': 660, 'total_size_bytes': 248810815}
+
+======================================================================
+D_Deck_FWD_Section_2_behind_section_1  (583 images)
+======================================================================
+  job_id=2da0f65d-fcf0-4457-a0b9-3abedd87d793
+  uploaded 40/583  uploaded 80/583  uploaded 120/583  uploaded 160/583  uploaded 200/583  uploaded 240/583  uploaded 280/583  uploaded 320/583  uploaded 360/583  uploaded 400/583  uploaded 440/583  uploaded 480/583  uploaded 520/583  uploaded 560/583  uploaded 583/583
+  upload/complete: {'status': 'upload_complete', 'images_count': 583, 'total_size_bytes': 195111726}
+
+======================================================================
+SSUS_AFT_Engine_Room_ES22_iPhone_P3DGL  (479 images)
+======================================================================
+  job_id=f81e4708-8144-4aaa-958d-2a08b7f2963d
+  uploaded 40/479  uploaded 80/479  uploaded 120/479  uploaded 160/479  uploaded 200/479  uploaded 240/479  uploaded 280/479  uploaded 320/479  uploaded 360/479  uploaded 400/479  uploaded 440/479  uploaded 479/479
+  upload/complete: {'status': 'upload_complete', 'images_count': 479, 'total_size_bytes': 244623386}
+
+======================================================================
+SSUS_AFT_Engine_Room_P2_1_02_iPad_P3DNW  (543 images)
+======================================================================
+  job_id=1e129bee-11bd-4ca4-af2e-57eecdc86910
+  uploaded 40/543  uploaded 80/543  uploaded 120/543  uploaded 160/543  uploaded 200/543  uploaded 240/543  uploaded 280/543  uploaded 320/543  uploaded 360/543  uploaded 400/543  uploaded 440/543  uploaded 480/543  uploaded 520/543  uploaded 543/543
+  upload/complete: {'status': 'upload_complete', 'images_count': 543, 'total_size_bytes': 243816224}
+
+======================================================================
+TY_UpperDeckAFT_UseThisOne  (1107 images)
+======================================================================
+  job_id=e2998a8e-5beb-49e9-9e20-9b0c80c6864b
+  uploaded 40/1107  uploaded 80/1107  uploaded 120/1107  uploaded 160/1107  uploaded 200/1107  uploaded 240/1107  uploaded 280/1107  uploaded 320/1107  uploaded 360/1107  uploaded 400/1107  uploaded 440/1107  uploaded 480/1107  uploaded 520/1107  uploaded 560/1107  uploaded 600/1107  uploaded 640/1107  uploaded 680/1107  uploaded 720/1107  uploaded 760/1107  uploaded 800/1107  uploaded 840/1107  uploaded 880/1107  uploaded 920/1107  uploaded 960/1107  uploaded 1000/1107  uploaded 1040/1107  uploaded 1080/1107  uploaded 1107/1107
+  upload/complete: {'status': 'upload_complete', 'images_count': 1107, 'total_size_bytes': 38604578}
+
+======================================================================
+core_propellers_2  (68 images)
+======================================================================
+  job_id=ae264aad-c97d-49ba-856a-ca9c750056f6
+  uploaded 40/68  uploaded 68/68
+  upload/complete: {'status': 'upload_complete', 'images_count': 68, 'total_size_bytes': 54172893}
+
+======================================================================
+engine_room_b_deck  (384 images)
+======================================================================
+  job_id=a083a525-a525-4f5a-836d-2b216e8955df
+  uploaded 40/384  uploaded 80/384  uploaded 120/384  uploaded 160/384  uploaded 200/384  uploaded 240/384  uploaded 280/384  uploaded 320/384  uploaded 360/384  uploaded 384/384
+  upload/complete: {'status': 'upload_complete', 'images_count': 384, 'total_size_bytes': 135392090}
+
+======================================================================
+front_tip_full  (1062 images)
+======================================================================
+  job_id=b15f2d28-7472-4ada-bd84-98a348eb6a14
+  uploaded 40/1062  uploaded 80/1062  uploaded 120/1062  uploaded 160/1062  uploaded 200/1062  uploaded 240/1062  uploaded 280/1062  uploaded 320/1062  uploaded 360/1062  uploaded 400/1062  uploaded 440/1062  uploaded 480/1062  uploaded 520/1062  uploaded 560/1062  uploaded 600/1062  uploaded 640/1062  uploaded 680/1062  uploaded 720/1062  uploaded 760/1062  uploaded 800/1062  uploaded 840/1062  uploaded 880/1062  uploaded 920/1062  uploaded 960/1062  uploaded 1000/1062  uploaded 1040/1062  uploaded 1062/1062
+  upload/complete: {'status': 'upload_complete', 'images_count': 1062, 'total_size_bytes': 364005119}
+
+======================================================================
+inside_big_towers  (366 images)
+======================================================================
+  job_id=109d6ed6-a026-4a09-8060-f0dc7767266d
+  uploaded 40/366  uploaded 80/366  uploaded 120/366  uploaded 160/366  uploaded 200/366  uploaded 240/366  uploaded 280/366  uploaded 320/366  uploaded 360/366  uploaded 366/366
+  upload/complete: {'status': 'upload_complete', 'images_count': 366, 'total_size_bytes': 242816790}
+
+======================================================================
+long_silver_tube  (296 images)
+======================================================================
+  job_id=741bd619-cf3a-40cc-8115-0145dec0a2c4
+  uploaded 40/296  uploaded 80/296  uploaded 120/296  uploaded 160/296  uploaded 200/296  uploaded 240/296  uploaded 280/296  uploaded 296/296
+  upload/complete: {'status': 'upload_complete', 'images_count': 296, 'total_size_bytes': 261998578}
+
+======================================================================
+SUMMARY
+======================================================================
+C_Deck_FWD|C_Deck_FWD|colmap|45ec5d06-29d4-42a5-b3f8-630c515269b2
+D_Deck_FWD_Section 1 (Front Tip)|D_Deck_FWD_Section_1_Front_Tip|colmap|657a4cae-281f-42aa-b836-7c86c74723b7
+D_Deck_FWD_Section 2(behind section 1)|D_Deck_FWD_Section_2_behind_section_1|colmap|2da0f65d-fcf0-4457-a0b9-3abedd87d793
+SSUS_AFT_Engine_Room_ES22_iPhone_P3DGL|SSUS_AFT_Engine_Room_ES22_iPhone_P3DGL|colmap|f81e4708-8144-4aaa-958d-2a08b7f2963d
+SSUS_AFT_Engine_Room_P2.1_02_iPad_P3DNW|SSUS_AFT_Engine_Room_P2_1_02_iPad_P3DNW|colmap|1e129bee-11bd-4ca4-af2e-57eecdc86910
+TY_UpperDeckAFT_UseThisOne|TY_UpperDeckAFT_UseThisOne|colmap|e2998a8e-5beb-49e9-9e20-9b0c80c6864b
+core propellers 2|core_propellers_2|colmap|ae264aad-c97d-49ba-856a-ca9c750056f6
+engine room b deck|engine_room_b_deck|colmap|a083a525-a525-4f5a-836d-2b216e8955df
+front tip full|front_tip_full|colmap|b15f2d28-7472-4ada-bd84-98a348eb6a14
+inside big towers|inside_big_towers|colmap|109d6ed6-a026-4a09-8060-f0dc7767266d
+long silver tube|long_silver_tube|colmap|741bd619-cf3a-40cc-8115-0145dec0a2c4

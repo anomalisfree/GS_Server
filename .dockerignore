@@ -1,0 +1,40 @@
+# Compiled Rust artefacts (very large – rebuilt inside Docker)
+brush/target/
+target/
+
+# Python caches
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Job data, uploads, and trained models (runtime data, not source)
+jobs/
+uploads/
+models/
+data/
+
+# Git
+.git/
+.gitignore
+
+# IDE / OS
+.vscode/
+.idea/
+**/.DS_Store
+**/Thumbs.db
+
+# Windows-specific COLMAP binary (Linux uses apt package)
+colmap/
+
+# Logs
+*.log
+
+# Local env files
+.env
+.env.*
+!.env.example

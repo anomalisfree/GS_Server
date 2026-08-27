@@ -71,8 +71,13 @@ class ColmapRunner:
                 return
             
             # 2. Feature Matching
+            matcher_type = job_colmap_config.get("matcher_type", colmap_config.matcher_type)
+            loop_detection = job_colmap_config.get(
+                "sequential_loop_detection", colmap_config.sequential_loop_detection
+            )
+            sequential_overlap = job_colmap_config.get("sequential_overlap")
             await self._run_feature_matching(
-                job_id, database_path, use_gpu
+                job_id, database_path, use_gpu, matcher_type, loop_detection, sequential_overlap
             )
             
             if (await self._job_manager.get_job(job_id)).status == JobStatus.CANCELLED:
@@ -141,7 +146,7 @@ class ColmapRunner:
             "--ImageReader.camera_model", camera_model,
             "--ImageReader.single_camera", "1" if single_camera else "0",
             "--SiftExtraction.max_image_size", str(max_image_size),
-            "--FeatureExtraction.use_gpu", "1" if use_gpu else "0",
+            "--SiftExtraction.use_gpu", "1" if use_gpu else "0",
             "--SiftExtraction.max_num_features", str(self._config.colmap.sift_max_features),
         ]
         
@@ -157,27 +162,48 @@ class ColmapRunner:
         self,
         job_id: str,
         database_path: Path,
-        use_gpu: bool
+        use_gpu: bool,
+        matcher_type: str = None,
+        loop_detection: bool = False,
+        sequential_overlap: int = None
     ):
         """Stage 2: Feature matching"""
+        matcher = matcher_type or self._config.colmap.matcher_type
+
         await self._job_manager.update_job_progress(
             job_id,
             colmap_progress=ColmapProgress(
                 stage=ColmapStage.FEATURE_MATCHING,
                 stage_progress=0.0,
-                message="Matching features..."
+                message=f"Matching features ({matcher})..."
             ),
             overall_progress=18.0
         )
-        
-        matcher = self._config.colmap.matcher_type
-        
+
         cmd = [
             self._colmap_exe, f"{matcher}_matcher",
             "--database_path", str(database_path),
-            "--FeatureMatching.use_gpu", "1" if use_gpu else "0",
+            "--SiftMatching.use_gpu", "1" if use_gpu else "0",
         ]
-        
+
+        if matcher == "sequential" and sequential_overlap:
+            # How many neighboring frames (by upload/capture order) each image is matched
+            # against. COLMAP's default is 10 — too narrow for captures with lower
+            # inter-frame overlap (faster motion / sparser sampling), which causes the
+            # incremental mapper to fail to connect most images into one model and
+            # silently fragment into many tiny disconnected reconstructions instead.
+            cmd.extend(["--SequentialMatching.overlap", str(sequential_overlap)])
+
+        if matcher == "sequential" and loop_detection:
+            vocab_tree = self._config.colmap.vocab_tree_path
+            if vocab_tree and Path(vocab_tree).exists():
+                cmd.extend([
+                    "--SequentialMatching.loop_detection", "1",
+                    "--SequentialMatching.vocab_tree_path", str(vocab_tree),
+                ])
+            else:
+                print(f"[COLMAP] Loop detection requested but no vocab_tree_path configured/found — skipping")
+
         await self._run_command(
             job_id, cmd, ColmapStage.FEATURE_MATCHING,
             base_progress=18.0, progress_range=12.0
@@ -231,14 +257,9 @@ class ColmapRunner:
             overall_progress=45.0
         )
         
-        # Найти модель (обычно в папке 0)
-        model_path = sparse_dir / "0"
-        if not model_path.exists():
-            # Попробовать найти любую папку с моделью
-            for p in sparse_dir.iterdir():
-                if p.is_dir() and (p / "cameras.bin").exists():
-                    model_path = p
-                    break
+        # Выбрать лучшую sparse-компоненту для undistort (а не просто sparse/0).
+        # Иначе Brush может обучаться на крошечной компоненте при multi-component mapper output.
+        model_path = await self._select_best_sparse_model(sparse_dir)
         
         cmd = [
             self._colmap_exe, "image_undistorter",
@@ -252,6 +273,51 @@ class ColmapRunner:
             job_id, cmd, ColmapStage.IMAGE_UNDISTORTION,
             base_progress=45.0, progress_range=5.0
         )
+
+    async def _select_best_sparse_model(self, sparse_dir: Path) -> Path:
+        """Pick the best sparse model component by registered images, then points."""
+        candidates = []
+        for p in sparse_dir.iterdir():
+            if not p.is_dir():
+                continue
+            if not (p / "cameras.bin").exists():
+                continue
+            candidates.append(p)
+
+        if not candidates:
+            raise RuntimeError(f"No sparse model found in {sparse_dir}")
+
+        best = candidates[0]
+        best_score = (-1, -1)
+
+        for c in candidates:
+            registered, points = await self._analyze_sparse_model(c)
+            score = (registered, points)
+            if score > best_score:
+                best = c
+                best_score = score
+
+        return best
+
+    async def _analyze_sparse_model(self, model_dir: Path) -> tuple[int, int]:
+        """Return (registered_images, points3d) parsed from `colmap model_analyzer`."""
+        cmd = [self._colmap_exe, "model_analyzer", "--path", str(model_dir)]
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        output = []
+        async for line in process.stdout:
+            output.append(line.decode("utf-8", errors="ignore"))
+        await process.wait()
+
+        text = "\n".join(output)
+        reg_match = re.search(r"Registered images:\s*(\d+)", text)
+        pts_match = re.search(r"Points:\s*(\d+)", text)
+        registered = int(reg_match.group(1)) if reg_match else 0
+        points = int(pts_match.group(1)) if pts_match else 0
+        return registered, points
     
     async def _run_command(
         self,

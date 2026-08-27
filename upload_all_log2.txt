@@ -1,0 +1,121 @@
+=== Uploading C_Deck_FWD -> C_Deck_FWD_prepared ===
+transforms.json           | 4 kB |   4.0 kB/s | ETA: 00:05:02 |   0%transforms.json           | 1214 kB | 1214.4 kB/s | ETA: 00:00:00 | 100%
+points3d.ply              | 4 kB |   4.0 kB/s | ETA: 02:01:34 |   0%points3d.ply              | 3360 kB | 3360.0 kB/s | ETA: 00:00:07 |  11%points3d.ply              | 9052 kB | 4526.0 kB/s | ETA: 00:00:04 |  31%points3d.ply              | 16972 kB | 5657.3 kB/s | ETA: 00:00:02 |  58%points3d.ply              | 25236 kB | 6309.0 kB/s | ETA: 00:00:00 |  86%points3d.ply              | 29183 kB | 7295.9 kB/s | ETA: 00:00:00 | 100%
+cdeck full tip_SensorFram | 4 kB |   4.0 kB/s | ETA: 00:01:10 |   1%cdeck full tip_SensorFram | 284 kB | 284.1 kB/s | ETA: 00:00:00 | 100%
+cdeck full tip_SensorFram | 4 kB |   4.0 kB/s | ETA: 00:00:58 |   1%cdeck full tip_SensorFram | 238 kB | 238.2 kB/s | ETA: 00:00:00 | 100%
+images: 1814
+images
+points3d.ply
+transforms.json
+=== Done: C_Deck_FWD ===
+=== Uploading D_Deck_FWD_Section 1 (Front Tip) -> D_Deck_FWD_Section_1_Front_Tip_prepared ===
+transforms.json           | 4 kB |   4.0 kB/s | ETA: 00:01:51 |   0%transforms.json           | 450 kB | 450.2 kB/s | ETA: 00:00:00 | 100%
+points3d.ply              | 4 kB |   4.0 kB/s | ETA: 02:01:16 |   0%points3d.ply              | 5212 kB | 5212.0 kB/s | ETA: 00:00:04 |  17%points3d.ply              | 19360 kB | 9680.0 kB/s | ETA: 00:00:01 |  66%points3d.ply              | 29110 kB | 14555.2 kB/s | ETA: 00:00:00 | 100%
+ddeck section of front ti | 4 kB |   4.0 kB/s | ETA: 00:01:20 |   1%ddeck section of front ti | 327 kB | 327.6 kB/s | ETA: 00:00:00 | 100%
+ddeck section of front ti | 4 kB |   4.0 kB/s | ETA: 00:01:18 |   1%ddeck section of front ti | 316 kB | 316.6 kB/s | ETA: 00:00:00 | 100%
+images: 660
+images
+points3d.ply
+transforms.json
+=== Done: D_Deck_FWD_Section_1_Front_Tip ===
+=== Uploading D_Deck_FWD_Section 2(behind section 1) -> D_Deck_FWD_Section_2_behind_section_1_prepared ===
+transforms.json           | 4 kB |   4.0 kB/s | ETA: 00:01:38 |   1%transforms.json           | 264 kB | 264.0 kB/s | ETA: 00:00:00 |  66%transforms.json           | 397 kB | 397.5 kB/s | ETA: 00:00:00 | 100%
+points3d.ply              | 4 kB |   4.0 kB/s | ETA: 02:01:49 |   0%points3d.ply              | 2992 kB | 2992.0 kB/s | ETA: 00:00:08 |  10%points3d.ply              | 16440 kB | 8220.0 kB/s | ETA: 00:00:01 |  56%points3d.ply              | 29242 kB | 14621.1 kB/s | ETA: 00:00:00 | 100%
+ddeck front tip section 2 | 4 kB |   4.0 kB/s | ETA: 00:01:30 |   1%ddeck front tip section 2 | 366 kB | 366.5 kB/s | ETA: 00:00:00 | 100%
+ddeck front tip section 2 | 4 kB |   4.0 kB/s | ETA: 00:01:30 |   1%ddeck front tip section 2 | 365 kB | 365.4 kB/s | ETA: 00:00:00 | 100%
+images: 583
+images
+points3d.ply
+transforms.json
+=== Done: D_Deck_FWD_Section_2_behind_section_1 ===
+=== Uploading SSUS_AFT_Engine_Room_ES22_iPhone_P3DGL -> SSUS_AFT_Engine_Room_ES22_iPhone_P3DGL_prepared ===
+ - Authentication backend unavailable.
+
+2026_08_04__14_01_06_Sens | 4 kB |   4.0 kB/s | ETA: 00:02:29 |   0%2026_08_04__14_01_06_Sens | 56 kB |  56.0 kB/s | ETA: 00:00:09 |   9%2026_08_04__14_01_06_Sens | 602 kB | 602.4 kB/s | ETA: 00:00:00 | 100%
+2026_08_04__14_01_06_Sens | 4 kB |   4.0 kB/s | ETA: 00:02:22 |   0%2026_08_04__14_01_06_Sens | 572 kB | 572.5 kB/s | ETA: 00:00:00 | 100%
+images: 479
+images
+points3d.ply
+transforms.json
+=== Done: SSUS_AFT_Engine_Room_ES22_iPhone_P3DGL ===
+=== Uploading SSUS_AFT_Engine_Room_P2.1_02_iPad_P3DNW -> SSUS_AFT_Engine_Room_P2_1_02_iPad_P3DNW_prepared ===
+transforms.json           | 4 kB |   4.0 kB/s | ETA: 00:01:30 |   1%transforms.json           | 104 kB | 104.0 kB/s | ETA: 00:00:02 |  28%transforms.json           | 366 kB | 366.8 kB/s | ETA: 00:00:00 | 100%
+points3d.ply              | 4 kB |   4.0 kB/s | ETA: 02:00:37 |   0%points3d.ply              | 544 kB | 544.0 kB/s | ETA: 00:00:52 |   1%points3d.ply              | 7628 kB | 3814.0 kB/s | ETA: 00:00:05 |  26%points3d.ply              | 17844 kB | 5948.0 kB/s | ETA: 00:00:01 |  61%points3d.ply              | 28924 kB | 7231.0 kB/s | ETA: 00:00:00 |  99%points3d.ply              | 28955 kB | 7238.8 kB/s | ETA: 00:00:00 | 100%
+2026_08_04__11_47_33_Sens | 4 kB |   4.0 kB/s | ETA: 00:02:01 |   0%2026_08_04__11_47_33_Sens | 489 kB | 490.0 kB/s | ETA: 00:00:00 | 100%
+2026_08_04__11_47_33_Sens | 4 kB |   4.0 kB/s | ETA: 00:02:05 |   0%2026_08_04__11_47_33_Sens | 505 kB | 505.8 kB/s | ETA: 00:00:00 | 100%
+images: 543
+images
+points3d.ply
+transforms.json
+=== Done: SSUS_AFT_Engine_Room_P2_1_02_iPad_P3DNW ===
+=== Uploading TY_UpperDeckAFT_UseThisOne -> TY_UpperDeckAFT_UseThisOne_prepared ===
+transforms.json           | 4 kB |   4.0 kB/s | ETA: 00:03:08 |   0%transforms.json           | 116 kB | 116.0 kB/s | ETA: 00:00:05 |  15%transforms.json           | 759 kB | 759.6 kB/s | ETA: 00:00:00 | 100%
+points3d.ply              | 4 kB |   4.0 kB/s | ETA: 02:01:20 |   0%points3d.ply              | 10116 kB | 10116.0 kB/s | ETA: 00:00:01 |  34%points3d.ply              | 24000 kB | 12000.0 kB/s | ETA: 00:00:00 |  82%points3d.ply              | 29127 kB | 14563.7 kB/s | ETA: 00:00:00 | 100%
+2026_08_03__16_05_46_Uppe | 4 kB |   4.0 kB/s | ETA: 00:00:06 |  12%2026_08_03__16_05_46_Uppe | 31 kB |  31.8 kB/s | ETA: 00:00:00 | 100%
+2026_08_03__16_05_46_Uppe | 4 kB |   4.0 kB/s | ETA: 00:00:07 |  11%2026_08_03__16_05_46_Uppe | 35 kB |  35.2 kB/s | ETA: 00:00:00 | 100%
+images: 1107
+images
+points3d.ply
+transforms.json
+=== Done: TY_UpperDeckAFT_UseThisOne ===
+=== Uploading core machines next to long tube -> core_machines_next_to_long_tube_prepared ===
+transforms.json           | 4 kB |   4.0 kB/s | ETA: 00:00:31 |   3%transforms.json           | 104 kB | 104.0 kB/s | ETA: 00:00:00 |  78%transforms.json           | 131 kB | 131.7 kB/s | ETA: 00:00:00 | 100%
+points3d.ply              | 4 kB |   4.0 kB/s | ETA: 02:01:34 |   0%points3d.ply              | 1412 kB | 1412.0 kB/s | ETA: 00:00:19 |   4%points3d.ply              | 13124 kB | 6562.0 kB/s | ETA: 00:00:02 |  44%points3d.ply              | 27888 kB | 9296.0 kB/s | ETA: 00:00:00 |  95%points3d.ply              | 29182 kB | 9727.5 kB/s | ETA: 00:00:00 | 100%
+core machines next to lon | 4 kB |   4.0 kB/s | ETA: 00:04:37 |   0%core machines next to lon | 1115 kB | 1115.5 kB/s | ETA: 00:00:00 | 100%
+core machines next to lon | 4 kB |   4.0 kB/s | ETA: 00:04:53 |   0%core machines next to lon | 1178 kB | 1178.3 kB/s | ETA: 00:00:00 | 100%
+images: 192
+images
+points3d.ply
+transforms.json
+=== Done: core_machines_next_to_long_tube ===
+=== Uploading core propellers 2 -> core_propellers_2_prepared ===
+transforms.json           | 4 kB |   4.0 kB/s | ETA: 00:00:10 |   8%transforms.json           | 45 kB |  45.9 kB/s | ETA: 00:00:00 | 100%
+points3d.ply              | 4 kB |   4.0 kB/s | ETA: 01:59:36 |   0%points3d.ply              | 2036 kB | 2036.0 kB/s | ETA: 00:00:13 |   7%points3d.ply              | 12776 kB | 6388.0 kB/s | ETA: 00:00:02 |  44%points3d.ply              | 26804 kB | 8934.7 kB/s | ETA: 00:00:00 |  93%points3d.ply              | 28709 kB | 9570.0 kB/s | ETA: 00:00:00 | 100%
+core propellers 2_SensorF | 4 kB |   4.0 kB/s | ETA: 00:02:49 |   0%core propellers 2_SensorF | 682 kB | 682.8 kB/s | ETA: 00:00:00 | 100%
+core propellers 2_SensorF | 4 kB |   4.0 kB/s | ETA: 00:03:04 |   0%core propellers 2_SensorF | 742 kB | 742.5 kB/s | ETA: 00:00:00 | 100%
+images: 68
+images
+points3d.ply
+transforms.json
+=== Done: core_propellers_2 ===
+=== Uploading engine room b deck -> engine_room_b_deck_prepared ===
+transforms.json           | 4 kB |   4.0 kB/s | ETA: 00:01:03 |   1%transforms.json           | 104 kB | 104.0 kB/s | ETA: 00:00:01 |  40%transforms.json           | 258 kB | 259.0 kB/s | ETA: 00:00:00 | 100%
+points3d.ply              | 4 kB |   4.0 kB/s | ETA: 02:00:16 |   0%points3d.ply              | 10160 kB | 10160.0 kB/s | ETA: 00:00:01 |  35%points3d.ply              | 24872 kB | 12436.0 kB/s | ETA: 00:00:00 |  86%points3d.ply              | 28870 kB | 14435.0 kB/s | ETA: 00:00:00 | 100%
+engine room b deck_Sensor | 4 kB |   4.0 kB/s | ETA: 00:02:21 |   0%engine room b deck_Sensor | 568 kB | 569.0 kB/s | ETA: 00:00:00 | 100%
+engine room b deck_Sensor | 4 kB |   4.0 kB/s | ETA: 00:02:19 |   0%engine room b deck_Sensor | 560 kB | 560.0 kB/s | ETA: 00:00:00 | 100%
+images: 384
+images
+points3d.ply
+transforms.json
+=== Done: engine_room_b_deck ===
+=== Uploading front tip full -> front_tip_full_prepared ===
+transforms.json           | 4 kB |   4.0 kB/s | ETA: 00:02:56 |   0%transforms.json           | 104 kB | 104.0 kB/s | ETA: 00:00:05 |  14%transforms.json           | 711 kB | 711.1 kB/s | ETA: 00:00:00 | 100%
+points3d.ply              | 4 kB |   4.0 kB/s | ETA: 02:01:15 |   0%points3d.ply              | 2176 kB | 2176.0 kB/s | ETA: 00:00:12 |   7%points3d.ply              | 4604 kB | 2302.0 kB/s | ETA: 00:00:10 |  15%points3d.ply              | 7760 kB | 2586.7 kB/s | ETA: 00:00:08 |  26%points3d.ply              | 10940 kB | 2735.0 kB/s | ETA: 00:00:06 |  37%points3d.ply              | 14624 kB | 2924.8 kB/s | ETA: 00:00:04 |  50%points3d.ply              | 18112 kB | 3018.7 kB/s | ETA: 00:00:03 |  62%points3d.ply              | 21864 kB | 3123.4 kB/s | ETA: 00:00:02 |  75%points3d.ply              | 25472 kB | 3184.0 kB/s | ETA: 00:00:01 |  87%points3d.ply              | 29105 kB | 3638.2 kB/s | ETA: 00:00:00 | 100%
+front tip full_SensorFram | 4 kB |   4.0 kB/s | ETA: 00:01:04 |   1%front tip full_SensorFram | 261 kB | 262.0 kB/s | ETA: 00:00:00 | 100%
+front tip full_SensorFram | 4 kB |   4.0 kB/s | ETA: 00:00:55 |   1%front tip full_SensorFram | 224 kB | 224.1 kB/s | ETA: 00:00:00 | 100%
+images: 1062
+images
+points3d.ply
+transforms.json
+=== Done: front_tip_full ===
+=== Uploading inside big towers -> inside_big_towers_prepared ===
+transforms.json           | 4 kB |   4.0 kB/s | ETA: 00:01:00 |   1%transforms.json           | 246 kB | 246.4 kB/s | ETA: 00:00:00 | 100%
+points3d.ply              | 4 kB |   4.0 kB/s | ETA: 02:00:36 |   0%points3d.ply              | 6264 kB | 6264.0 kB/s | ETA: 00:00:03 |  21%points3d.ply              | 20080 kB | 10040.0 kB/s | ETA: 00:00:00 |  69%points3d.ply              | 28949 kB | 14474.9 kB/s | ETA: 00:00:00 | 100%
+inside big towers_SensorF | 4 kB |   4.0 kB/s | ETA: 00:03:31 |   0%inside big towers_SensorF | 850 kB | 850.3 kB/s | ETA: 00:00:00 | 100%
+inside big towers_SensorF | 4 kB |   4.0 kB/s | ETA: 00:04:01 |   0%inside big towers_SensorF | 968 kB | 968.5 kB/s | ETA: 00:00:00 | 100%
+images: 366
+images
+points3d.ply
+transforms.json
+=== Done: inside_big_towers ===
+=== Uploading long silver tube -> long_silver_tube_prepared ===
+transforms.json           | 4 kB |   4.0 kB/s | ETA: 00:00:48 |   2%transforms.json           | 198 kB | 198.9 kB/s | ETA: 00:00:00 | 100%
+points3d.ply              | 4 kB |   4.0 kB/s | ETA: 01:59:33 |   0%points3d.ply              | 5876 kB | 5876.0 kB/s | ETA: 00:00:03 |  20%points3d.ply              | 20428 kB | 10214.0 kB/s | ETA: 00:00:00 |  71%points3d.ply              | 28699 kB | 14349.7 kB/s | ETA: 00:00:00 | 100%
+long silver tube_SensorFr | 4 kB |   4.0 kB/s | ETA: 00:04:26 |   0%long silver tube_SensorFr | 1068 kB | 1068.7 kB/s | ETA: 00:00:00 | 100%
+long silver tube_SensorFr | 4 kB |   4.0 kB/s | ETA: 00:03:46 |   0%long silver tube_SensorFr | 910 kB | 910.6 kB/s | ETA: 00:00:00 | 100%
+images: 296
+images
+points3d.ply
+transforms.json
+=== Done: long_silver_tube ===
+ALL UPLOADS COMPLETE

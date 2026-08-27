@@ -1,0 +1,12 @@
+C_Deck_FWD|C_Deck_FWD
+D_Deck_FWD_Section 1 (Front Tip)|D_Deck_FWD_Section_1_Front_Tip
+D_Deck_FWD_Section 2(behind section 1)|D_Deck_FWD_Section_2_behind_section_1
+SSUS_AFT_Engine_Room_ES22_iPhone_P3DGL|SSUS_AFT_Engine_Room_ES22_iPhone_P3DGL
+SSUS_AFT_Engine_Room_P2.1_02_iPad_P3DNW|SSUS_AFT_Engine_Room_P2_1_02_iPad_P3DNW
+TY_UpperDeckAFT_UseThisOne|TY_UpperDeckAFT_UseThisOne
+core machines next to long tube|core_machines_next_to_long_tube
+core propellers 2|core_propellers_2
+engine room b deck|engine_room_b_deck
+front tip full|front_tip_full
+inside big towers|inside_big_towers
+long silver tube|long_silver_tube
