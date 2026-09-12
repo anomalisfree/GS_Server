@@ -1,17 +1,29 @@
 """
-Post-training removal of "needle" floater Gaussians at object silhouette edges.
+Post-training removal of floater Gaussians from an exported PLY.
 
-A calibration sweep of Brush's --opac-loss-weight / --scale-loss-weight showed
-those loss terms don't target anisotropy at all: they just prune splat count
-indiscriminately, and the survivors bloat in size to cover the resulting gaps
-(see config.py BrushConfig.opac_decay comment). This module instead filters the
-exported PLY directly after training, removing only Gaussians that are both
-highly elongated (max/min scale ratio) AND large in absolute scene terms —
-exactly the signature of a needle artifact sticking out into empty space.
-Small anisotropic Gaussians (e.g. thin real edges) are left alone.
+Two independent filter passes, chained in brush_runner.py (needle filter
+first, then cluster filter - each writes to the same "_filtered.ply" output):
+
+- filter_needle_floaters: removes Gaussians that are both highly elongated
+  (max/min scale ratio) and large in absolute scene terms - a splat's own
+  shape, judged in isolation. A calibration sweep of Brush's
+  --opac-loss-weight / --scale-loss-weight showed those loss terms don't
+  target anisotropy at all: they just prune splat count indiscriminately,
+  and the survivors bloat in size to cover the resulting gaps (see config.py
+  BrushConfig.opac_decay comment) - this filters the export directly instead.
+
+- filter_isolated_clusters: removes small clusters of Gaussians that are
+  spatially disconnected from the main scanned structure - scattered debris
+  around the edge of the scan volume. The needle filter has no notion of
+  spatial isolation (a splat can be perfectly ordinary in shape/size and
+  still be junk if it's sitting alone in empty space far from everything
+  else), so this population survives it entirely.
 """
 
 import numpy as np
+from scipy.spatial import cKDTree
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
 
 _TYPE_MAP = {
     "float": "<f4", "float32": "<f4", "double": "<f8", "float64": "<f8",
@@ -114,6 +126,106 @@ def filter_needle_floaters(in_path, out_path, aniso_threshold=20000.0, size_mult
         "size_multiplier": size_multiplier,
         "median_maxdim": float(np.median(maxdim)),
         "effective_min_size": min_size,
+    }
+
+
+def filter_isolated_clusters(in_path, out_path, k=8, radius_multiplier=5.0, bbox_padding=None):
+    """Remove Gaussians that sit in small clusters spatially disconnected from
+    the main scanned structure - scattered debris around the edge of the scan
+    volume that filter_needle_floaters doesn't catch, since it only looks at
+    a splat's own shape (anisotropy/size), never whether it's isolated in
+    space.
+
+    Diagnosed against a real job (colmap_images, ~310k splats): a naive
+    "keep only the largest connected component" is WRONG - a real, coherent
+    ~19% chunk of that model came back as a *separate* connected component
+    purely because of a locally sparse/thin bridging region, not because it's
+    debris (confirmed: it sat 100% inside the main component's own bounding
+    box). So this only removes a non-main component if it lies entirely
+    OUTSIDE the main component's (padded) bounding box - i.e. genuinely
+    beyond the scanned volume, not just disconnected by a local density gap
+    within it. On that same job this correctly isolated ~1% of the model
+    (~1000 tiny clusters scattered just past the scan boundary) while leaving
+    the large internal chunk untouched.
+
+    `radius_multiplier` sets the connectivity radius as a multiple of the
+    model's own median nearest-neighbor spacing (self-calibrating across
+    scene scale/density, same rationale as filter_needle_floaters' size
+    cutoff). `bbox_padding` defaults to 2x that radius - a small safety
+    margin so real structure just past the sampled bounding box edge isn't
+    clipped.
+
+    Returns a stats dict. If the PLY has no scale_0/1/2 properties, or has
+    too few points to build a meaningful connectivity graph, copies the file
+    through unchanged and returns skipped=True.
+    """
+    header_lines, data = _read_ply(in_path)
+
+    if not {"scale_0", "scale_1", "scale_2"} <= set(data.dtype.names):
+        _write_ply(out_path, header_lines, data)
+        return {"skipped": True, "input_count": int(len(data)), "reason": "not a gaussian splat export"}
+
+    n = len(data)
+    if n < 1000:
+        _write_ply(out_path, header_lines, data)
+        return {"skipped": True, "input_count": n, "reason": "too few points"}
+
+    xyz = np.stack([data["x"], data["y"], data["z"]], axis=1).astype(np.float64)
+
+    tree = cKDTree(xyz)
+    k_query = min(k + 1, n)
+    dists, idxs = tree.query(xyz, k=k_query, workers=-1)
+    knn_dist = dists[:, 1:].mean(axis=1) if k_query > 1 else np.zeros(n)
+    median_nn = float(np.median(knn_dist))
+    radius = median_nn * radius_multiplier
+    if bbox_padding is None:
+        bbox_padding = radius * 2.0
+
+    # Connectivity graph built directly from the k-NN query above (at most
+    # n*k edges, regardless of local point density) rather than a radius-ball
+    # query_pairs search - the latter's edge count is unbounded and blew up
+    # memory on a real multi-million-splat dense model (a single dense pocket
+    # can contribute tens of millions of pairs on its own). Edges beyond the
+    # connectivity radius are dropped so a sparse/isolated point doesn't get
+    # spuriously linked to its k-th nearest neighbor just because it exists,
+    # even when that neighbor is actually far away.
+    if k_query <= 1:
+        _write_ply(out_path, header_lines, data)
+        return {"skipped": True, "input_count": n, "reason": "too few points for k-NN graph"}
+    src = np.repeat(np.arange(n), k_query - 1)
+    dst = idxs[:, 1:].ravel()
+    edge_dist = dists[:, 1:].ravel()
+    keep_edge = edge_dist <= radius
+    src, dst = src[keep_edge], dst[keep_edge]
+    if src.size == 0:
+        _write_ply(out_path, header_lines, data)
+        return {"skipped": True, "input_count": n, "reason": "degenerate connectivity graph"}
+
+    graph = csr_matrix((np.ones(src.size), (src, dst)), shape=(n, n))
+    ncomp, labels = connected_components(graph, directed=False)
+    comp_sizes = np.bincount(labels)
+    main_label = int(np.argmax(comp_sizes))
+
+    main_pts = xyz[labels == main_label]
+    bbmin = main_pts.min(axis=0) - bbox_padding
+    bbmax = main_pts.max(axis=0) + bbox_padding
+    inside_main_bbox = np.all((xyz >= bbmin) & (xyz <= bbmax), axis=1)
+
+    remove = (labels != main_label) & ~inside_main_bbox
+    filtered = data[~remove]
+
+    _write_ply(out_path, header_lines, filtered)
+
+    return {
+        "skipped": False,
+        "input_count": n,
+        "output_count": int(len(filtered)),
+        "removed_count": int(remove.sum()),
+        "removed_pct": round(100.0 * remove.sum() / n, 3) if n else 0.0,
+        "n_components": int(ncomp),
+        "main_component_frac": round(float(comp_sizes[main_label]) / n, 4),
+        "radius": radius,
+        "bbox_padding": bbox_padding,
     }
 
 

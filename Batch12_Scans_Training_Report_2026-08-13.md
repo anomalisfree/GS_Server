@@ -44,22 +44,24 @@ Job'ы: с `d90ce883-...` (первый в партии, `C_Deck_FWD_nocolmap`)
 
 **Все 12 — стабильны, ~2М сплатов каждый (соответствует размеру входного облака точек).** Это надёжные результаты, можно использовать уже сейчас.
 
-### Прямые ссылки на скачивание готовых моделей (.ply)
+### Прямые ссылки на скачивание готовых моделей (.ply) и видео-превью
 
-| Датасет | Ссылка |
-|---|---|
-| C_Deck_FWD | http://136.64.198.146:8080/jobs/d90ce883-75db-4a5e-b769-9712957f4648/model |
-| D_Deck_Section_1 | http://136.64.198.146:8080/jobs/02056964-f302-47f3-ba00-740c9bfc1d76/model |
-| D_Deck_Section_2 | http://136.64.198.146:8080/jobs/54de76d2-dc01-4f35-8f56-5f7b091b7c9d/model |
-| SSUS_iPhone | http://136.64.198.146:8080/jobs/56bf62dd-e09e-4a11-87b1-e30c4c55ca45/model |
-| SSUS_iPad | http://136.64.198.146:8080/jobs/be2d94d8-2aff-4e44-9e6b-369d5c6b0fd4/model |
-| TY_UpperDeckAFT | http://136.64.198.146:8080/jobs/9a181af7-f3aa-4d20-974e-bf575f4f4d95/model |
-| core_machines | http://136.64.198.146:8080/jobs/2151e56b-2fc3-4659-acc3-c4768004e5dd/model |
-| core_propellers_2 | http://136.64.198.146:8080/jobs/6321bba9-52e1-4586-8846-b8d4943f63a2/model |
-| engine_room_b_deck | http://136.64.198.146:8080/jobs/dd055e8c-e802-46d0-8a72-39d6ba24cc85/model |
-| front_tip_full | http://136.64.198.146:8080/jobs/bee9c851-f202-4392-b95a-8016bac5d7ab/model |
-| inside_big_towers | http://136.64.198.146:8080/jobs/54520125-8bb6-4b37-b594-51321ab64d39/model |
-| long_silver_tube | http://136.64.198.146:8080/jobs/07c03e9b-d0f8-4d76-8163-af2e9188116c/model |
+Видео-превью рендерятся сервером по запросу (не хранятся заранее) — см. раздел 12 `CLIENT_TRAINING_MODES_DEVELOPER_GUIDE.md`. Ссылки ниже уже отрендерены и рабочие; если конкретное видео недоступно (сервер мог его не сохранить), просто повторите `POST /jobs/{job_id}/preview`.
+
+| Датасет | Модель (.ply) | Превью (видео) |
+|---|---|---|
+| C_Deck_FWD | http://136.64.198.146:8080/jobs/d90ce883-75db-4a5e-b769-9712957f4648/model | http://136.64.198.146:8080/jobs/d90ce883-75db-4a5e-b769-9712957f4648/preview/download |
+| D_Deck_Section_1 | http://136.64.198.146:8080/jobs/02056964-f302-47f3-ba00-740c9bfc1d76/model | http://136.64.198.146:8080/jobs/02056964-f302-47f3-ba00-740c9bfc1d76/preview/download |
+| D_Deck_Section_2 | http://136.64.198.146:8080/jobs/54de76d2-dc01-4f35-8f56-5f7b091b7c9d/model | http://136.64.198.146:8080/jobs/54de76d2-dc01-4f35-8f56-5f7b091b7c9d/preview/download |
+| SSUS_iPhone | http://136.64.198.146:8080/jobs/56bf62dd-e09e-4a11-87b1-e30c4c55ca45/model | http://136.64.198.146:8080/jobs/56bf62dd-e09e-4a11-87b1-e30c4c55ca45/preview/download |
+| SSUS_iPad | http://136.64.198.146:8080/jobs/be2d94d8-2aff-4e44-9e6b-369d5c6b0fd4/model | http://136.64.198.146:8080/jobs/be2d94d8-2aff-4e44-9e6b-369d5c6b0fd4/preview/download |
+| TY_UpperDeckAFT | http://136.64.198.146:8080/jobs/9a181af7-f3aa-4d20-974e-bf575f4f4d95/model | http://136.64.198.146:8080/jobs/9a181af7-f3aa-4d20-974e-bf575f4f4d95/preview/download |
+| core_machines | http://136.64.198.146:8080/jobs/2151e56b-2fc3-4659-acc3-c4768004e5dd/model | http://136.64.198.146:8080/jobs/2151e56b-2fc3-4659-acc3-c4768004e5dd/preview/download |
+| core_propellers_2 | http://136.64.198.146:8080/jobs/6321bba9-52e1-4586-8846-b8d4943f63a2/model | http://136.64.198.146:8080/jobs/6321bba9-52e1-4586-8846-b8d4943f63a2/preview/download |
+| engine_room_b_deck | http://136.64.198.146:8080/jobs/dd055e8c-e802-46d0-8a72-39d6ba24cc85/model | http://136.64.198.146:8080/jobs/dd055e8c-e802-46d0-8a72-39d6ba24cc85/preview/download |
+| front_tip_full | http://136.64.198.146:8080/jobs/bee9c851-f202-4392-b95a-8016bac5d7ab/model | http://136.64.198.146:8080/jobs/bee9c851-f202-4392-b95a-8016bac5d7ab/preview/download |
+| inside_big_towers | http://136.64.198.146:8080/jobs/54520125-8bb6-4b37-b594-51321ab64d39/model | http://136.64.198.146:8080/jobs/54520125-8bb6-4b37-b594-51321ab64d39/preview/download |
+| long_silver_tube | http://136.64.198.146:8080/jobs/07c03e9b-d0f8-4d76-8163-af2e9188116c/model | http://136.64.198.146:8080/jobs/07c03e9b-d0f8-4d76-8163-af2e9188116c/preview/download |
 
 Промежуточные чекпоинты (каждые 2500 итераций) — `http://136.64.198.146:8080/jobs/{job_id}/exports`.
 
@@ -88,6 +90,7 @@ Job'ы: с `d90ce883-...` (первый в партии, `C_Deck_FWD_nocolmap`)
 - 1 job (TY_UpperDeckAFT) вообще упал с ошибкой при загрузке датасета в Brush — по всей видимости, побочный эффект той же фрагментации (41 кусок вместо одной модели)
 
 Готовая модель core_machines (единственная надёжная из COLMAP-партии v1): http://136.64.198.146:8080/jobs/a44e3232-9db3-4d34-aff9-94513033aaad/model
+Видео-превью: http://136.64.198.146:8080/jobs/a44e3232-9db3-4d34-aff9-94513033aaad/preview/download
 
 **Первая гипотеза причины:** дефолтное окно поиска соседних кадров у sequential-матчера в COLMAP (`--SequentialMatching.overlap`, по умолчанию 10 кадров) — слишком узкое для этих съёмок.
 
@@ -290,19 +293,19 @@ Baланс теперь разумный: убрали заметный, но н
 
 Все датасеты обучены в гибридном режиме (`hybrid_known_poses`) на финальной версии pipeline: денойзинг + калиброванный приоритет COLMAP + фильтр по длине трека + дефолтная регуляризация Brush + относительный пост-обработочный фильтр. Числа сплатов — из реально скачиваемого файла (после пост-обработки), не из промежуточного отчёта прогресса.
 
-| Датасет | Job ID | Финальных сплатов | Ссылка на модель |
-|---|---|---|---|
-| C_Deck_FWD | cc34ee98-98c8-4c3d-a28b-e455805b6f57 | 1 747 709 | http://136.64.198.146:8080/jobs/cc34ee98-98c8-4c3d-a28b-e455805b6f57/model |
-| D_Deck_FWD_Section_1_Front_Tip | 25be7ece-eeb5-43f0-97db-a40201271834 | 1 863 815 | http://136.64.198.146:8080/jobs/25be7ece-eeb5-43f0-97db-a40201271834/model |
-| D_Deck_FWD_Section_2_behind_section_1 | 1bb10401-3235-4980-b4a2-ab70b8d31d3c | 1 891 234 | http://136.64.198.146:8080/jobs/1bb10401-3235-4980-b4a2-ab70b8d31d3c/model |
-| SSUS_AFT_Engine_Room_ES22_iPhone_P3DGL | 790ef5c3-1ebd-472a-8aaf-f6eb57ff65f7 | 1 650 321 | http://136.64.198.146:8080/jobs/790ef5c3-1ebd-472a-8aaf-f6eb57ff65f7/model |
-| SSUS_AFT_Engine_Room_P2.1_02_iPad_P3DNW | 8e7a0f8f-bc96-4fc8-931c-2683d199c22e | 1 762 234 | http://136.64.198.146:8080/jobs/8e7a0f8f-bc96-4fc8-931c-2683d199c22e/model |
-| TY_UpperDeckAFT_UseThisOne | ad1b5983-cbaf-4e32-a998-d6c012f5781c | 1 542 136 | http://136.64.198.146:8080/jobs/ad1b5983-cbaf-4e32-a998-d6c012f5781c/model |
-| core_machines_next_to_long_tube | 53676ac9-379d-41af-8d31-d91482e7aebf | 1 638 948 | http://136.64.198.146:8080/jobs/53676ac9-379d-41af-8d31-d91482e7aebf/model |
-| engine_room_b_deck | d507e3a3-29d4-4771-9bc7-1ddb183ec821 | 1 880 573 | http://136.64.198.146:8080/jobs/d507e3a3-29d4-4771-9bc7-1ddb183ec821/model |
-| front_tip_full | bb052a50-a579-45fb-b338-a4f7c94fd1ab | 1 741 954 | http://136.64.198.146:8080/jobs/bb052a50-a579-45fb-b338-a4f7c94fd1ab/model |
-| inside_big_towers | ad381047-3de3-47d1-90a1-fa10de8a614b | 1 678 151 | http://136.64.198.146:8080/jobs/ad381047-3de3-47d1-90a1-fa10de8a614b/model |
-| long_silver_tube | e8098869-814a-42e6-9cf0-0458cb4eedf7 | 1 620 657 | http://136.64.198.146:8080/jobs/e8098869-814a-42e6-9cf0-0458cb4eedf7/model |
+| Датасет | Job ID | Финальных сплатов | Ссылка на модель | Превью (видео) |
+|---|---|---|---|---|
+| C_Deck_FWD | cc34ee98-98c8-4c3d-a28b-e455805b6f57 | 1 747 709 | http://136.64.198.146:8080/jobs/cc34ee98-98c8-4c3d-a28b-e455805b6f57/model | http://136.64.198.146:8080/jobs/cc34ee98-98c8-4c3d-a28b-e455805b6f57/preview/download |
+| D_Deck_FWD_Section_1_Front_Tip | 25be7ece-eeb5-43f0-97db-a40201271834 | 1 863 815 | http://136.64.198.146:8080/jobs/25be7ece-eeb5-43f0-97db-a40201271834/model | http://136.64.198.146:8080/jobs/25be7ece-eeb5-43f0-97db-a40201271834/preview/download |
+| D_Deck_FWD_Section_2_behind_section_1 | 1bb10401-3235-4980-b4a2-ab70b8d31d3c | 1 891 234 | http://136.64.198.146:8080/jobs/1bb10401-3235-4980-b4a2-ab70b8d31d3c/model | http://136.64.198.146:8080/jobs/1bb10401-3235-4980-b4a2-ab70b8d31d3c/preview/download |
+| SSUS_AFT_Engine_Room_ES22_iPhone_P3DGL | 790ef5c3-1ebd-472a-8aaf-f6eb57ff65f7 | 1 650 321 | http://136.64.198.146:8080/jobs/790ef5c3-1ebd-472a-8aaf-f6eb57ff65f7/model | http://136.64.198.146:8080/jobs/790ef5c3-1ebd-472a-8aaf-f6eb57ff65f7/preview/download |
+| SSUS_AFT_Engine_Room_P2.1_02_iPad_P3DNW | 8e7a0f8f-bc96-4fc8-931c-2683d199c22e | 1 762 234 | http://136.64.198.146:8080/jobs/8e7a0f8f-bc96-4fc8-931c-2683d199c22e/model | http://136.64.198.146:8080/jobs/8e7a0f8f-bc96-4fc8-931c-2683d199c22e/preview/download |
+| TY_UpperDeckAFT_UseThisOne | ad1b5983-cbaf-4e32-a998-d6c012f5781c | 1 542 136 | http://136.64.198.146:8080/jobs/ad1b5983-cbaf-4e32-a998-d6c012f5781c/model | http://136.64.198.146:8080/jobs/ad1b5983-cbaf-4e32-a998-d6c012f5781c/preview/download |
+| core_machines_next_to_long_tube | 53676ac9-379d-41af-8d31-d91482e7aebf | 1 638 948 | http://136.64.198.146:8080/jobs/53676ac9-379d-41af-8d31-d91482e7aebf/model | http://136.64.198.146:8080/jobs/53676ac9-379d-41af-8d31-d91482e7aebf/preview/download |
+| engine_room_b_deck | d507e3a3-29d4-4771-9bc7-1ddb183ec821 | 1 880 573 | http://136.64.198.146:8080/jobs/d507e3a3-29d4-4771-9bc7-1ddb183ec821/model | http://136.64.198.146:8080/jobs/d507e3a3-29d4-4771-9bc7-1ddb183ec821/preview/download |
+| front_tip_full | bb052a50-a579-45fb-b338-a4f7c94fd1ab | 1 741 954 | http://136.64.198.146:8080/jobs/bb052a50-a579-45fb-b338-a4f7c94fd1ab/model | http://136.64.198.146:8080/jobs/bb052a50-a579-45fb-b338-a4f7c94fd1ab/preview/download |
+| inside_big_towers | ad381047-3de3-47d1-90a1-fa10de8a614b | 1 678 151 | http://136.64.198.146:8080/jobs/ad381047-3de3-47d1-90a1-fa10de8a614b/model | http://136.64.198.146:8080/jobs/ad381047-3de3-47d1-90a1-fa10de8a614b/preview/download |
+| long_silver_tube | e8098869-814a-42e6-9cf0-0458cb4eedf7 | 1 620 657 | http://136.64.198.146:8080/jobs/e8098869-814a-42e6-9cf0-0458cb4eedf7/model | http://136.64.198.146:8080/jobs/e8098869-814a-42e6-9cf0-0458cb4eedf7/preview/download |
 
 Промежуточные чекпоинты и нефильтрованная версия — `http://136.64.198.146:8080/jobs/{job_id}/exports`.
 
@@ -327,11 +330,11 @@ Baланс теперь разумный: убрали заметный, но н
 
 ### 11.2 Результаты — три режима на одном датасете
 
-| Режим | Job ID | Данные | Финальных сплатов | Ссылка |
-|---|---|---|---|---|
-| С COLMAP (только фото) | b7638369-62a5-4109-9165-597cfa1bf5cc | images | 12 776 | http://136.64.198.146:8080/jobs/b7638369-62a5-4109-9165-597cfa1bf5cc/model |
-| Без COLMAP (калиброванный лидар) | 0744429c-118e-41dd-a740-3c2b64513382 | внешний LiDAR | 2 371 591 | http://136.64.198.146:8080/jobs/0744429c-118e-41dd-a740-3c2b64513382/model |
-| Гибрид | 209dd64d-eefe-4564-a35d-5f771868f6b8 | LiDAR + COLMAP | 2 277 282 | http://136.64.198.146:8080/jobs/209dd64d-eefe-4564-a35d-5f771868f6b8/model |
+| Режим | Job ID | Данные | Финальных сплатов | Ссылка на модель | Превью (видео) |
+|---|---|---|---|---|---|
+| С COLMAP (только фото) | b7638369-62a5-4109-9165-597cfa1bf5cc | images | 12 776 | http://136.64.198.146:8080/jobs/b7638369-62a5-4109-9165-597cfa1bf5cc/model | http://136.64.198.146:8080/jobs/b7638369-62a5-4109-9165-597cfa1bf5cc/preview/download |
+| Без COLMAP (калиброванный лидар) | 0744429c-118e-41dd-a740-3c2b64513382 | внешний LiDAR | 2 371 591 | http://136.64.198.146:8080/jobs/0744429c-118e-41dd-a740-3c2b64513382/model | http://136.64.198.146:8080/jobs/0744429c-118e-41dd-a740-3c2b64513382/preview/download |
+| Гибрид | 209dd64d-eefe-4564-a35d-5f771868f6b8 | LiDAR + COLMAP | 2 277 282 | http://136.64.198.146:8080/jobs/209dd64d-eefe-4564-a35d-5f771868f6b8/model | http://136.64.198.146:8080/jobs/209dd64d-eefe-4564-a35d-5f771868f6b8/preview/download |
 
 **Режим "только COLMAP" дал заметно меньше сплатов (12 776 против ~2.3–2.4М у двух других).** Проверка показала: incremental mapper COLMAP фрагментировал реконструкцию на 4 несвязанных куска (0/1/2/3), обучение прошло на самом крупном из них — та же категория проблемы, что и в разделе 3 (нехватка текстуры/связности между кадрами для чистого SfM). Режимы с использованием LiDAR (без COLMAP и гибрид) этой проблемы не имеют, поскольку не зависят от связности графа снимков.
 

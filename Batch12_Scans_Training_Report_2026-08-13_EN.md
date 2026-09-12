@@ -44,22 +44,24 @@ Point clouds downsampled from the original `.ply` files to ~2M points. Several d
 
 **All 12 are stable, ~2M splats each (matching the input point cloud size).** These are reliable results, usable right now.
 
-### Direct Download Links (.ply)
+### Direct Download Links (.ply) and Video Previews
 
-| Dataset | Link |
-|---|---|
-| C_Deck_FWD | http://136.64.198.146:8080/jobs/d90ce883-75db-4a5e-b769-9712957f4648/model |
-| D_Deck_Section_1 | http://136.64.198.146:8080/jobs/02056964-f302-47f3-ba00-740c9bfc1d76/model |
-| D_Deck_Section_2 | http://136.64.198.146:8080/jobs/54de76d2-dc01-4f35-8f56-5f7b091b7c9d/model |
-| SSUS_iPhone | http://136.64.198.146:8080/jobs/56bf62dd-e09e-4a11-87b1-e30c4c55ca45/model |
-| SSUS_iPad | http://136.64.198.146:8080/jobs/be2d94d8-2aff-4e44-9e6b-369d5c6b0fd4/model |
-| TY_UpperDeckAFT | http://136.64.198.146:8080/jobs/9a181af7-f3aa-4d20-974e-bf575f4f4d95/model |
-| core_machines | http://136.64.198.146:8080/jobs/2151e56b-2fc3-4659-acc3-c4768004e5dd/model |
-| core_propellers_2 | http://136.64.198.146:8080/jobs/6321bba9-52e1-4586-8846-b8d4943f63a2/model |
-| engine_room_b_deck | http://136.64.198.146:8080/jobs/dd055e8c-e802-46d0-8a72-39d6ba24cc85/model |
-| front_tip_full | http://136.64.198.146:8080/jobs/bee9c851-f202-4392-b95a-8016bac5d7ab/model |
-| inside_big_towers | http://136.64.198.146:8080/jobs/54520125-8bb6-4b37-b594-51321ab64d39/model |
-| long_silver_tube | http://136.64.198.146:8080/jobs/07c03e9b-d0f8-4d76-8163-af2e9188116c/model |
+Video previews are rendered by the server on demand (not pre-stored) - see section 12 of `CLIENT_TRAINING_MODES_DEVELOPER_GUIDE.md`. The links below are already rendered and working; if a specific one is unavailable (the server may not have kept it), just re-request it with `POST /jobs/{job_id}/preview`.
+
+| Dataset | Model (.ply) | Preview (video) |
+|---|---|---|
+| C_Deck_FWD | http://136.64.198.146:8080/jobs/d90ce883-75db-4a5e-b769-9712957f4648/model | http://136.64.198.146:8080/jobs/d90ce883-75db-4a5e-b769-9712957f4648/preview/download |
+| D_Deck_Section_1 | http://136.64.198.146:8080/jobs/02056964-f302-47f3-ba00-740c9bfc1d76/model | http://136.64.198.146:8080/jobs/02056964-f302-47f3-ba00-740c9bfc1d76/preview/download |
+| D_Deck_Section_2 | http://136.64.198.146:8080/jobs/54de76d2-dc01-4f35-8f56-5f7b091b7c9d/model | http://136.64.198.146:8080/jobs/54de76d2-dc01-4f35-8f56-5f7b091b7c9d/preview/download |
+| SSUS_iPhone | http://136.64.198.146:8080/jobs/56bf62dd-e09e-4a11-87b1-e30c4c55ca45/model | http://136.64.198.146:8080/jobs/56bf62dd-e09e-4a11-87b1-e30c4c55ca45/preview/download |
+| SSUS_iPad | http://136.64.198.146:8080/jobs/be2d94d8-2aff-4e44-9e6b-369d5c6b0fd4/model | http://136.64.198.146:8080/jobs/be2d94d8-2aff-4e44-9e6b-369d5c6b0fd4/preview/download |
+| TY_UpperDeckAFT | http://136.64.198.146:8080/jobs/9a181af7-f3aa-4d20-974e-bf575f4f4d95/model | http://136.64.198.146:8080/jobs/9a181af7-f3aa-4d20-974e-bf575f4f4d95/preview/download |
+| core_machines | http://136.64.198.146:8080/jobs/2151e56b-2fc3-4659-acc3-c4768004e5dd/model | http://136.64.198.146:8080/jobs/2151e56b-2fc3-4659-acc3-c4768004e5dd/preview/download |
+| core_propellers_2 | http://136.64.198.146:8080/jobs/6321bba9-52e1-4586-8846-b8d4943f63a2/model | http://136.64.198.146:8080/jobs/6321bba9-52e1-4586-8846-b8d4943f63a2/preview/download |
+| engine_room_b_deck | http://136.64.198.146:8080/jobs/dd055e8c-e802-46d0-8a72-39d6ba24cc85/model | http://136.64.198.146:8080/jobs/dd055e8c-e802-46d0-8a72-39d6ba24cc85/preview/download |
+| front_tip_full | http://136.64.198.146:8080/jobs/bee9c851-f202-4392-b95a-8016bac5d7ab/model | http://136.64.198.146:8080/jobs/bee9c851-f202-4392-b95a-8016bac5d7ab/preview/download |
+| inside_big_towers | http://136.64.198.146:8080/jobs/54520125-8bb6-4b37-b594-51321ab64d39/model | http://136.64.198.146:8080/jobs/54520125-8bb6-4b37-b594-51321ab64d39/preview/download |
+| long_silver_tube | http://136.64.198.146:8080/jobs/07c03e9b-d0f8-4d76-8163-af2e9188116c/model | http://136.64.198.146:8080/jobs/07c03e9b-d0f8-4d76-8163-af2e9188116c/preview/download |
 
 Intermediate checkpoints (every 2500 iterations) — `http://136.64.198.146:8080/jobs/{job_id}/exports`.
 
@@ -88,6 +90,7 @@ Intermediate checkpoints (every 2500 iterations) — `http://136.64.198.146:8080
 - 1 job (TY_UpperDeckAFT) crashed outright while loading the dataset into Brush — apparently a side effect of that same fragmentation (41 fragments instead of one model)
 
 Working model for `core_machines` (the only reliable result from the v1 COLMAP batch): http://136.64.198.146:8080/jobs/a44e3232-9db3-4d34-aff9-94513033aaad/model
+Video preview: http://136.64.198.146:8080/jobs/a44e3232-9db3-4d34-aff9-94513033aaad/preview/download
 
 **Initial hypothesis:** COLMAP's default neighbor-search window for the sequential matcher (`--SequentialMatching.overlap`, default 10 frames) is too narrow for these captures.
 
@@ -290,19 +293,19 @@ All 6 crashed datasets were recreated and successfully retrained after the fix.
 
 All datasets were trained in hybrid mode (`hybrid_known_poses`) on the final pipeline version: denoising + calibrated COLMAP priority + track-length filter + Brush defaults for regularization + relative post-processing filter. Splat counts are from the actual downloadable file (post-filter), not the intermediate progress report.
 
-| Dataset | Job ID | Final Splats | Model Link |
-|---|---|---|---|
-| C_Deck_FWD | cc34ee98-98c8-4c3d-a28b-e455805b6f57 | 1,747,709 | http://136.64.198.146:8080/jobs/cc34ee98-98c8-4c3d-a28b-e455805b6f57/model |
-| D_Deck_FWD_Section_1_Front_Tip | 25be7ece-eeb5-43f0-97db-a40201271834 | 1,863,815 | http://136.64.198.146:8080/jobs/25be7ece-eeb5-43f0-97db-a40201271834/model |
-| D_Deck_FWD_Section_2_behind_section_1 | 1bb10401-3235-4980-b4a2-ab70b8d31d3c | 1,891,234 | http://136.64.198.146:8080/jobs/1bb10401-3235-4980-b4a2-ab70b8d31d3c/model |
-| SSUS_AFT_Engine_Room_ES22_iPhone_P3DGL | 790ef5c3-1ebd-472a-8aaf-f6eb57ff65f7 | 1,650,321 | http://136.64.198.146:8080/jobs/790ef5c3-1ebd-472a-8aaf-f6eb57ff65f7/model |
-| SSUS_AFT_Engine_Room_P2.1_02_iPad_P3DNW | 8e7a0f8f-bc96-4fc8-931c-2683d199c22e | 1,762,234 | http://136.64.198.146:8080/jobs/8e7a0f8f-bc96-4fc8-931c-2683d199c22e/model |
-| TY_UpperDeckAFT_UseThisOne | ad1b5983-cbaf-4e32-a998-d6c012f5781c | 1,542,136 | http://136.64.198.146:8080/jobs/ad1b5983-cbaf-4e32-a998-d6c012f5781c/model |
-| core_machines_next_to_long_tube | 53676ac9-379d-41af-8d31-d91482e7aebf | 1,638,948 | http://136.64.198.146:8080/jobs/53676ac9-379d-41af-8d31-d91482e7aebf/model |
-| engine_room_b_deck | d507e3a3-29d4-4771-9bc7-1ddb183ec821 | 1,880,573 | http://136.64.198.146:8080/jobs/d507e3a3-29d4-4771-9bc7-1ddb183ec821/model |
-| front_tip_full | bb052a50-a579-45fb-b338-a4f7c94fd1ab | 1,741,954 | http://136.64.198.146:8080/jobs/bb052a50-a579-45fb-b338-a4f7c94fd1ab/model |
-| inside_big_towers | ad381047-3de3-47d1-90a1-fa10de8a614b | 1,678,151 | http://136.64.198.146:8080/jobs/ad381047-3de3-47d1-90a1-fa10de8a614b/model |
-| long_silver_tube | e8098869-814a-42e6-9cf0-0458cb4eedf7 | 1,620,657 | http://136.64.198.146:8080/jobs/e8098869-814a-42e6-9cf0-0458cb4eedf7/model |
+| Dataset | Job ID | Final Splats | Model Link | Preview (video) |
+|---|---|---|---|---|
+| C_Deck_FWD | cc34ee98-98c8-4c3d-a28b-e455805b6f57 | 1,747,709 | http://136.64.198.146:8080/jobs/cc34ee98-98c8-4c3d-a28b-e455805b6f57/model | http://136.64.198.146:8080/jobs/cc34ee98-98c8-4c3d-a28b-e455805b6f57/preview/download |
+| D_Deck_FWD_Section_1_Front_Tip | 25be7ece-eeb5-43f0-97db-a40201271834 | 1,863,815 | http://136.64.198.146:8080/jobs/25be7ece-eeb5-43f0-97db-a40201271834/model | http://136.64.198.146:8080/jobs/25be7ece-eeb5-43f0-97db-a40201271834/preview/download |
+| D_Deck_FWD_Section_2_behind_section_1 | 1bb10401-3235-4980-b4a2-ab70b8d31d3c | 1,891,234 | http://136.64.198.146:8080/jobs/1bb10401-3235-4980-b4a2-ab70b8d31d3c/model | http://136.64.198.146:8080/jobs/1bb10401-3235-4980-b4a2-ab70b8d31d3c/preview/download |
+| SSUS_AFT_Engine_Room_ES22_iPhone_P3DGL | 790ef5c3-1ebd-472a-8aaf-f6eb57ff65f7 | 1,650,321 | http://136.64.198.146:8080/jobs/790ef5c3-1ebd-472a-8aaf-f6eb57ff65f7/model | http://136.64.198.146:8080/jobs/790ef5c3-1ebd-472a-8aaf-f6eb57ff65f7/preview/download |
+| SSUS_AFT_Engine_Room_P2.1_02_iPad_P3DNW | 8e7a0f8f-bc96-4fc8-931c-2683d199c22e | 1,762,234 | http://136.64.198.146:8080/jobs/8e7a0f8f-bc96-4fc8-931c-2683d199c22e/model | http://136.64.198.146:8080/jobs/8e7a0f8f-bc96-4fc8-931c-2683d199c22e/preview/download |
+| TY_UpperDeckAFT_UseThisOne | ad1b5983-cbaf-4e32-a998-d6c012f5781c | 1,542,136 | http://136.64.198.146:8080/jobs/ad1b5983-cbaf-4e32-a998-d6c012f5781c/model | http://136.64.198.146:8080/jobs/ad1b5983-cbaf-4e32-a998-d6c012f5781c/preview/download |
+| core_machines_next_to_long_tube | 53676ac9-379d-41af-8d31-d91482e7aebf | 1,638,948 | http://136.64.198.146:8080/jobs/53676ac9-379d-41af-8d31-d91482e7aebf/model | http://136.64.198.146:8080/jobs/53676ac9-379d-41af-8d31-d91482e7aebf/preview/download |
+| engine_room_b_deck | d507e3a3-29d4-4771-9bc7-1ddb183ec821 | 1,880,573 | http://136.64.198.146:8080/jobs/d507e3a3-29d4-4771-9bc7-1ddb183ec821/model | http://136.64.198.146:8080/jobs/d507e3a3-29d4-4771-9bc7-1ddb183ec821/preview/download |
+| front_tip_full | bb052a50-a579-45fb-b338-a4f7c94fd1ab | 1,741,954 | http://136.64.198.146:8080/jobs/bb052a50-a579-45fb-b338-a4f7c94fd1ab/model | http://136.64.198.146:8080/jobs/bb052a50-a579-45fb-b338-a4f7c94fd1ab/preview/download |
+| inside_big_towers | ad381047-3de3-47d1-90a1-fa10de8a614b | 1,678,151 | http://136.64.198.146:8080/jobs/ad381047-3de3-47d1-90a1-fa10de8a614b/model | http://136.64.198.146:8080/jobs/ad381047-3de3-47d1-90a1-fa10de8a614b/preview/download |
+| long_silver_tube | e8098869-814a-42e6-9cf0-0458cb4eedf7 | 1,620,657 | http://136.64.198.146:8080/jobs/e8098869-814a-42e6-9cf0-0458cb4eedf7/model | http://136.64.198.146:8080/jobs/e8098869-814a-42e6-9cf0-0458cb4eedf7/preview/download |
 
 Intermediate checkpoints and the unfiltered version — `http://136.64.198.146:8080/jobs/{job_id}/exports`.
 
@@ -327,11 +330,11 @@ Calibration outcome: COLMAP registered 114/114 frames, scale factor 0.7998, ICP 
 
 ### 11.2 Results — Three Modes on One Dataset
 
-| Mode | Job ID | Data | Final Splats | Link |
-|---|---|---|---|---|
-| With COLMAP (images only) | b7638369-62a5-4109-9165-597cfa1bf5cc | images | 12,776 | http://136.64.198.146:8080/jobs/b7638369-62a5-4109-9165-597cfa1bf5cc/model |
-| Without COLMAP (calibrated LiDAR) | 0744429c-118e-41dd-a740-3c2b64513382 | external LiDAR | 2,371,591 | http://136.64.198.146:8080/jobs/0744429c-118e-41dd-a740-3c2b64513382/model |
-| Hybrid | 209dd64d-eefe-4564-a35d-5f771868f6b8 | LiDAR + COLMAP | 2,277,282 | http://136.64.198.146:8080/jobs/209dd64d-eefe-4564-a35d-5f771868f6b8/model |
+| Mode | Job ID | Data | Final Splats | Model Link | Preview (video) |
+|---|---|---|---|---|---|
+| With COLMAP (images only) | b7638369-62a5-4109-9165-597cfa1bf5cc | images | 12,776 | http://136.64.198.146:8080/jobs/b7638369-62a5-4109-9165-597cfa1bf5cc/model | http://136.64.198.146:8080/jobs/b7638369-62a5-4109-9165-597cfa1bf5cc/preview/download |
+| Without COLMAP (calibrated LiDAR) | 0744429c-118e-41dd-a740-3c2b64513382 | external LiDAR | 2,371,591 | http://136.64.198.146:8080/jobs/0744429c-118e-41dd-a740-3c2b64513382/model | http://136.64.198.146:8080/jobs/0744429c-118e-41dd-a740-3c2b64513382/preview/download |
+| Hybrid | 209dd64d-eefe-4564-a35d-5f771868f6b8 | LiDAR + COLMAP | 2,277,282 | http://136.64.198.146:8080/jobs/209dd64d-eefe-4564-a35d-5f771868f6b8/model | http://136.64.198.146:8080/jobs/209dd64d-eefe-4564-a35d-5f771868f6b8/preview/download |
 
 **"COLMAP-only" mode produced noticeably fewer splats (12,776 vs. ~2.3–2.4M for the other two).** Investigation showed COLMAP's incremental mapper fragmented the reconstruction into 4 disconnected pieces (0/1/2/3), and training ran on only the largest one — the same category of problem as section 3 (insufficient texture/connectivity between frames for pure SfM). The LiDAR-based modes (without-COLMAP and hybrid) don't have this problem, since they don't depend on image-graph connectivity.
 

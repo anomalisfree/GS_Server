@@ -14,8 +14,8 @@ import aiofiles
 import aiofiles.os
 
 from .models import (
-    JobStatus, JobInfo, JobProgress, ColmapProgress, 
-    TrainingProgress, ColmapStage, WebSocketMessage, TrainingMode
+    JobStatus, JobInfo, JobProgress, ColmapProgress,
+    TrainingProgress, ColmapStage, WebSocketMessage, TrainingMode, PreviewStatus
 )
 from .config import get_config
 
@@ -37,18 +37,28 @@ class Job:
     
     model_path: Optional[str] = None
     model_size_bytes: Optional[int] = None
-    
+
+    # Видео-превью - см. preview_renderer.py. Никогда не выставляется
+    # автоматически, только через явный POST /jobs/{id}/preview.
+    preview_status: PreviewStatus = PreviewStatus.NOT_REQUESTED
+    preview_error: Optional[str] = None
+    preview_stats: Optional[Dict[str, Any]] = None
+
     config: Dict[str, Any] = field(default_factory=dict)
-    
+
     # Внутренние пути
     job_dir: Optional[Path] = None
     images_dir: Optional[Path] = None
     colmap_dir: Optional[Path] = None
     output_dir: Optional[Path] = None
-    
+
     # Callbacks
     _websocket_callbacks: List[Callable] = field(default_factory=list)
-    
+
+    @property
+    def preview_path(self) -> Optional[Path]:
+        return self.output_dir / "preview.mp4" if self.output_dir else None
+
     def to_info(self) -> JobInfo:
         """Конвертировать в JobInfo для API"""
         return JobInfo(
@@ -64,9 +74,11 @@ class Job:
             total_size_bytes=self.total_size_bytes,
             model_path=self.model_path,
             model_size_bytes=self.model_size_bytes,
+            preview_status=self.preview_status,
+            preview_error=self.preview_error,
             config=self.config
         )
-    
+
     def to_dict(self) -> dict:
         """Сериализовать для сохранения"""
         return {
@@ -82,6 +94,9 @@ class Job:
             "total_size_bytes": self.total_size_bytes,
             "model_path": self.model_path,
             "model_size_bytes": self.model_size_bytes,
+            "preview_status": self.preview_status.value,
+            "preview_error": self.preview_error,
+            "preview_stats": self.preview_stats,
             "config": self.config
         }
     
@@ -116,6 +131,9 @@ class Job:
             total_size_bytes=data.get("total_size_bytes", 0),
             model_path=data.get("model_path"),
             model_size_bytes=data.get("model_size_bytes"),
+            preview_status=PreviewStatus(data.get("preview_status", "not_requested")),
+            preview_error=data.get("preview_error"),
+            preview_stats=data.get("preview_stats"),
             config=data.get("config", {})
         )
         
@@ -159,7 +177,14 @@ class JobManager:
                                     job.progress.status = JobStatus.PENDING
                                     job.progress.message = "Restart after server restart"
                                     await self._queue.put(job.job_id)
-                                    
+
+                                # A preview render doesn't survive a restart (not queued,
+                                # not resumed automatically - the client has to re-request it).
+                                if job.preview_status == PreviewStatus.RENDERING:
+                                    job.preview_status = PreviewStatus.FAILED
+                                    job.preview_error = "Interrupted by server restart"
+
+
                         except Exception as e:
                             print(f"Error loading job {job_dir}: {e}")
         
@@ -417,6 +442,43 @@ class JobManager:
         await self._save_job_state(job)
         await self._notify_subscribers(job, "error", {"error": error})
     
+    async def start_preview_render(self, job_id: str) -> bool:
+        """Mark a preview render as started. Returns False if one is already
+        in progress for this job (caller should treat that as a conflict)."""
+        job = self._jobs.get(job_id)
+        if not job:
+            return False
+        if job.preview_status == PreviewStatus.RENDERING:
+            return False
+
+        job.preview_status = PreviewStatus.RENDERING
+        job.preview_error = None
+        job.preview_stats = None
+        job.updated_at = datetime.utcnow()
+        await self._save_job_state(job)
+        return True
+
+    async def mark_preview_completed(self, job_id: str, stats: dict):
+        job = self._jobs.get(job_id)
+        if not job:
+            return
+        job.preview_status = PreviewStatus.COMPLETED
+        job.preview_error = None
+        job.preview_stats = stats
+        job.updated_at = datetime.utcnow()
+        await self._save_job_state(job)
+        await self._notify_subscribers(job, "preview_completed", {"stats": stats})
+
+    async def mark_preview_failed(self, job_id: str, error: str):
+        job = self._jobs.get(job_id)
+        if not job:
+            return
+        job.preview_status = PreviewStatus.FAILED
+        job.preview_error = error
+        job.updated_at = datetime.utcnow()
+        await self._save_job_state(job)
+        await self._notify_subscribers(job, "preview_failed", {"error": error})
+
     def subscribe(self, job_id: str, callback: Callable):
         """Subscribe to job updates"""
         if job_id not in self._websocket_subscribers:

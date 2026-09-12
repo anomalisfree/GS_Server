@@ -149,6 +149,21 @@ class BrushConfig:
     floater_filter_aniso_threshold: float = 1.01
     floater_filter_size_multiplier: float = 15.0
 
+    # Second, separate post-training filter pass: removes scattered debris
+    # clusters spatially disconnected from the main scanned structure (see
+    # floater_filter.filter_isolated_clusters). The needle filter above only
+    # looks at a splat's own shape (anisotropy/size) and has no notion of
+    # spatial isolation, so it never catches this population. Diagnosed on
+    # job 723ea5d2 (colmap_images): removed 0.84% of the model (all visible
+    # scattered specks around the scan) while leaving a real, coherent ~19%
+    # chunk of the model untouched - that chunk came back as its own
+    # connected component purely from a local density gap, not because it's
+    # debris (confirmed: it sat 100% inside the main component's bounding
+    # box, which is exactly what this filter checks for before removing
+    # anything).
+    cluster_filter_enabled: bool = True
+    cluster_filter_radius_multiplier: float = 5.0
+
 
 @dataclass
 class MaskingConfig:
@@ -219,7 +234,13 @@ def load_config() -> AppConfig:
     config.brush.floater_filter_size_multiplier = float(
         os.getenv("BRUSH_FLOATER_FILTER_SIZE_MULTIPLIER", config.brush.floater_filter_size_multiplier)
     )
-    
+    config.brush.cluster_filter_enabled = os.getenv(
+        "BRUSH_CLUSTER_FILTER_ENABLED", str(config.brush.cluster_filter_enabled).lower()
+    ).lower() == "true"
+    config.brush.cluster_filter_radius_multiplier = float(
+        os.getenv("BRUSH_CLUSTER_FILTER_RADIUS_MULTIPLIER", config.brush.cluster_filter_radius_multiplier)
+    )
+
     # Masking
     config.masking.enabled = os.getenv("MASKING_ENABLED", str(config.masking.enabled).lower()).lower() == "true"
     if remove := os.getenv("MASKING_REMOVE_CLASSES"):

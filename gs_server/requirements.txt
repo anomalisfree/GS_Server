@@ -11,3 +11,6 @@ websockets>=12.0
 # DeepLabV3 masking (semantic segmentation for background removal)
 torch>=2.0.0
 torchvision>=0.15.0
+
+# Video preview rendering (preview_renderer.py) - headless, no GUI deps needed on a server
+opencv-python-headless>=4.8.0

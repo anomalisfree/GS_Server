@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional, List
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, WebSocket, WebSocketDisconnect, Body
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Query, WebSocket, WebSocketDisconnect, Body, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import aiofiles
@@ -19,7 +19,8 @@ from .config import get_config, AppConfig
 from .models import (
     JobStatus, JobInfo, JobProgress, CreateJobRequest, CreateJobResponse,
     JobListResponse, UploadProgressResponse, StartTrainingRequest,
-    ModelInfo, ServerStatus, WebSocketMessage, TrainingMode
+    ModelInfo, ServerStatus, WebSocketMessage, TrainingMode,
+    PreviewRequest, PreviewInfo, PreviewStatus
 )
 from .job_manager import get_job_manager, JobManager
 from . import __version__
@@ -53,6 +54,18 @@ app = FastAPI(
     version=__version__,
     lifespan=lifespan
 )
+
+# Сериализует on-demand рендеры превью между собой (не с обучением — то и
+# другое использует GPU, но параллельные превью-рендеры быстрее исчерпают
+# память, чем один превью параллельно с трейном).
+_preview_render_lock = asyncio.Lock()
+
+def _public_base_url(request: Request) -> str:
+    """Build an externally-reachable base URL from the actual request the
+    client made, instead of config.server.host (which is the bind address,
+    typically 0.0.0.0 - not reachable as a URL by clients)."""
+    return str(request.base_url).rstrip("/")
+
 
 # CORS для доступа из браузера
 app.add_middleware(
@@ -117,6 +130,7 @@ async def get_server_status():
 
 @app.post("/jobs", response_model=CreateJobResponse, tags=["Jobs"])
 async def create_job(
+    http_request: Request,
     request: CreateJobRequest = Body(
         ...,
         description=(
@@ -127,8 +141,7 @@ async def create_job(
 ):
     """Создать новую задачу с явным выбором training mode"""
     job_manager = get_job_manager()
-    config = get_config()
-    
+
     training_mode = _resolve_training_mode(request.training_mode, request.skip_colmap)
 
     job = await job_manager.create_job(
@@ -148,13 +161,14 @@ async def create_job(
         and request.dataset_path
     ):
         await job_manager.start_processing(job.job_id)
-    
-    base_url = f"http://{config.server.host}:{config.server.port}"
-    
+
+    base_url = _public_base_url(http_request)
+    ws_url = "ws" + base_url.split("http", 1)[1]  # http(s):// -> ws(s)://
+
     return CreateJobResponse(
         job_id=job.job_id,
         upload_url=f"{base_url}/jobs/{job.job_id}/upload",
-        websocket_url=f"ws://{config.server.host}:{config.server.port}/jobs/{job.job_id}/ws"
+        websocket_url=f"{ws_url}/jobs/{job.job_id}/ws"
     )
 
 
@@ -565,11 +579,10 @@ async def download_model(job_id: str):
 
 
 @app.get("/jobs/{job_id}/model/info", response_model=ModelInfo, tags=["Download"])
-async def get_model_info(job_id: str):
+async def get_model_info(job_id: str, http_request: Request):
     """Получить информацию о модели"""
     job_manager = get_job_manager()
-    config = get_config()
-    
+
     job = await job_manager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -589,7 +602,7 @@ async def get_model_info(job_id: str):
         final_ssim=training.ssim if training else None,
         splat_count=training.splat_count if training else 0,
         created_at=job.completed_at or job.updated_at,
-        download_url=f"http://{config.server.host}:{config.server.port}/jobs/{job_id}/model"
+        download_url=f"{_public_base_url(http_request)}/jobs/{job_id}/model"
     )
 
 
@@ -634,6 +647,136 @@ async def download_export(job_id: str, filename: str):
         filename=filename,
         media_type="application/octet-stream"
     )
+
+
+@app.post("/jobs/{job_id}/preview", response_model=PreviewInfo, tags=["Preview"])
+async def create_preview(job_id: str, request: PreviewRequest = Body(default=PreviewRequest())):
+    """Render a video preview of the trained model (flythrough along the
+    scene's actual capture poses).
+
+    This is a separate, explicit, optional request - never triggered
+    automatically by training. Correctly handles the fact that a
+    `colmap_images`/`hybrid_colmap_pointcloud` model lives in COLMAP's own
+    (independently solved, differently oriented) coordinate frame, unlike
+    `pointcloud_only`/`hybrid_known_poses` models - see preview_renderer.py.
+    """
+    job_manager = get_job_manager()
+
+    job = await job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Training not completed - nothing to preview yet")
+
+    started = await job_manager.start_preview_render(job_id)
+    if not started:
+        raise HTTPException(status_code=409, detail="A preview render is already in progress for this job")
+
+    asyncio.create_task(_run_preview_render(job_id, request))
+
+    return PreviewInfo(job_id=job_id, status=PreviewStatus.RENDERING)
+
+
+async def _run_preview_render(job_id: str, request: PreviewRequest):
+    """Background task kicked off by create_preview(). Runs the actual (CPU/GPU-bound,
+    blocking) rendering in a thread executor so it doesn't stall the event loop."""
+    job_manager = get_job_manager()
+    async with _preview_render_lock:
+        job = await job_manager.get_job(job_id)
+        if not job:
+            return
+        try:
+            from . import preview_renderer
+
+            loop = asyncio.get_event_loop()
+            stats = await loop.run_in_executor(
+                None,
+                lambda: preview_renderer.render_preview_video(
+                    job,
+                    job.preview_path,
+                    num_waypoints=request.num_waypoints,
+                    sub_steps=request.sub_steps,
+                    path_smoothing=request.path_smoothing,
+                    fps=request.fps,
+                    resolution=request.resolution,
+                ),
+            )
+            await job_manager.mark_preview_completed(job_id, stats)
+        except Exception as e:
+            await job_manager.mark_preview_failed(job_id, str(e))
+
+
+@app.get("/jobs/{job_id}/preview", response_model=PreviewInfo, tags=["Preview"])
+async def get_preview(job_id: str, http_request: Request):
+    """Check status of a requested preview render, and get its download URL once ready."""
+    job_manager = get_job_manager()
+
+    job = await job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    download_url = None
+    if job.preview_status == PreviewStatus.COMPLETED and job.preview_path and job.preview_path.exists():
+        download_url = f"{_public_base_url(http_request)}/jobs/{job_id}/preview/download"
+
+    return PreviewInfo(
+        job_id=job_id,
+        status=job.preview_status,
+        error=job.preview_error,
+        download_url=download_url,
+        stats=job.preview_stats,
+    )
+
+
+@app.get("/jobs/{job_id}/preview/download", tags=["Preview"])
+async def download_preview(job_id: str):
+    """Download the rendered preview video."""
+    job_manager = get_job_manager()
+
+    job = await job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.preview_status != PreviewStatus.COMPLETED or not job.preview_path or not job.preview_path.exists():
+        raise HTTPException(status_code=404, detail="Preview not available")
+
+    return FileResponse(
+        str(job.preview_path),
+        filename=f"{job.name}_preview.mp4",
+        media_type="video/mp4"
+    )
+
+
+@app.get("/jobs/{job_id}/camera_positions", tags=["Preview"])
+async def get_camera_positions(job_id: str, count: int = Query(default=12, ge=1, le=100)):
+    """A small, well-spread set of the job's actual capture camera poses -
+    lets a human quickly pick a good starting viewpoint in an external 3DGS
+    viewer loading the same exported .ply, instead of scrolling through
+    hundreds of near-duplicate training frames. Cheap and synchronous - just
+    reads camera pose files, no model loading or GPU rendering involved.
+    Handles the same COLMAP-vs-original-frame distinction as the preview
+    video (see preview_renderer.py's module docstring) - positions/vectors
+    are returned in world space, the same frame as the exported .ply.
+    """
+    job_manager = get_job_manager()
+
+    job = await job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Training not completed - no camera poses to offer yet")
+
+    from . import preview_renderer
+
+    loop = asyncio.get_event_loop()
+    try:
+        result = await loop.run_in_executor(None, lambda: preview_renderer.get_camera_positions(job, count))
+    except preview_renderer.PreviewError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {"job_id": job_id, **result}
 
 
 # ============== WebSocket API ==============

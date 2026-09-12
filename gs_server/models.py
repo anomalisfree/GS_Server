@@ -24,6 +24,15 @@ class JobStatus(str, Enum):
     CANCELLED = "cancelled"       # Отменено
 
 
+class PreviewStatus(str, Enum):
+    """Status of an on-demand video preview render (see preview_renderer.py).
+    Never set automatically after training - only via POST /jobs/{id}/preview."""
+    NOT_REQUESTED = "not_requested"
+    RENDERING = "rendering"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class ColmapStage(str, Enum):
     """COLMAP stages"""
     FEATURE_EXTRACTION = "feature_extraction"
@@ -96,7 +105,11 @@ class JobInfo(BaseModel):
     # Результаты
     model_path: Optional[str] = None
     model_size_bytes: Optional[int] = None
-    
+
+    # Видео-превью (опционально, только по явному запросу - см. preview_renderer.py)
+    preview_status: PreviewStatus = PreviewStatus.NOT_REQUESTED
+    preview_error: Optional[str] = None
+
     # Конфигурация
     config: Dict[str, Any] = Field(default_factory=dict)
 
@@ -246,6 +259,31 @@ class ModelInfo(BaseModel):
     splat_count: int
     created_at: datetime
     download_url: str
+
+
+class PreviewRequest(BaseModel):
+    """Request to render a video preview of a completed job's model.
+    Never triggered automatically - the client must explicitly POST this."""
+    num_waypoints: int = Field(default=40, ge=2, le=200, description="Real camera poses sampled along the capture path")
+    sub_steps: int = Field(default=48, ge=1, le=120, description="Interpolated sub-frames per waypoint segment (smoothness/slowness) - higher is slower camera motion at the same fps, not just a lower frame rate")
+    path_smoothing: float = Field(
+        default=0.5, ge=0.0, le=1.0,
+        description="0 = fly the raw sampled capture poses as-is (can have sharp turns where the "
+                     "operator's real path zig-zagged); 1 = fully smooth the waypoint path. Smoothing "
+                     "is automatically reduced near scene geometry so the smoothed path doesn't cut "
+                     "through objects the original path went around."
+    )
+    fps: int = Field(default=24, ge=1, le=60)
+    resolution: int = Field(default=960, ge=128, le=1920, description="Output width in pixels; height follows source aspect ratio")
+
+
+class PreviewInfo(BaseModel):
+    """Status/result of a job's video preview"""
+    job_id: str
+    status: PreviewStatus
+    error: Optional[str] = None
+    download_url: Optional[str] = None
+    stats: Optional[Dict[str, Any]] = None
 
 
 class ServerStatus(BaseModel):

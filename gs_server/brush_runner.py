@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Optional
 
 from .models import JobStatus, TrainingProgress
 from .config import get_config
-from .floater_filter import filter_needle_floaters
+from .floater_filter import filter_needle_floaters, filter_isolated_clusters
 
 if TYPE_CHECKING:
     from .job_manager import JobManager, Job
@@ -368,6 +368,8 @@ class BrushRunner:
             # Убрать needle-выбросы на краях объекта (см. floater_filter.py) —
             # хирургически, в отличие от opac/scale decay, который не снижает
             # анизотропию выживших гауссианов, а просто прорежает их количество.
+            filtered_path = Path(final_model).with_name(Path(final_model).stem + "_filtered.ply")
+
             floater_enabled = job_brush_config.get("floater_filter_enabled", brush_config.floater_filter_enabled)
             if floater_enabled:
                 aniso_threshold = job_brush_config.get(
@@ -376,7 +378,6 @@ class BrushRunner:
                 size_multiplier = job_brush_config.get(
                     "floater_filter_size_multiplier", brush_config.floater_filter_size_multiplier
                 )
-                filtered_path = Path(final_model).with_name(Path(final_model).stem + "_filtered.ply")
                 try:
                     stats = filter_needle_floaters(final_model, str(filtered_path), aniso_threshold, size_multiplier)
                     if not stats.get("skipped"):
@@ -390,6 +391,32 @@ class BrushRunner:
                         final_size = filtered_path.stat().st_size
                 except Exception as e:
                     logger.warning(f"Floater filter failed, keeping unfiltered model: {e}")
+
+            # Remove scattered debris clusters spatially disconnected from the
+            # main scanned structure (see floater_filter.py's docstring for why
+            # this is a separate pass from the needle filter above - shape-based
+            # filtering has no notion of spatial isolation, so it misses this
+            # population entirely). Chains onto whatever final_model currently
+            # is (needle-filtered or not) and always writes the canonical
+            # "_filtered.ply" output.
+            cluster_enabled = job_brush_config.get("cluster_filter_enabled", brush_config.cluster_filter_enabled)
+            if cluster_enabled:
+                radius_multiplier = job_brush_config.get(
+                    "cluster_filter_radius_multiplier", brush_config.cluster_filter_radius_multiplier
+                )
+                try:
+                    stats = filter_isolated_clusters(final_model, str(filtered_path), radius_multiplier=radius_multiplier)
+                    if not stats.get("skipped"):
+                        print(
+                            f"[BRUSH] Cluster filter removed {stats['removed_count']} "
+                            f"({stats['removed_pct']}%) isolated splats "
+                            f"({stats['n_components']} components, main component "
+                            f"{100 * stats['main_component_frac']:.1f}% of model)"
+                        )
+                        final_model = str(filtered_path)
+                        final_size = filtered_path.stat().st_size
+                except Exception as e:
+                    logger.warning(f"Cluster filter failed, keeping model as-is: {e}")
 
             # Обновить финальный прогресс тренировки
             await self._job_manager.update_job_progress(
