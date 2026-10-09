@@ -95,15 +95,23 @@ actual output before assuming the connection dropped.
 `brush/` is a separate repository (gitignored here). Everything below that
 touches Rust - the depth render channel, position-anchor / aniso-reg /
 photo-consistency in `train.rs`, the optional PLY properties in `export.rs`,
-the new CLI flags in `config.rs` - exists **only as uncommitted edits in the
-server's `/home/anoma/brush` working tree** (base commit `3edecbb`, 19 modified
-files across `brush-dataset`, `brush-process`, `brush-render`,
-`brush-render-bwd`, `brush-serde`, `brush-train`, `brush-ui`). Your local
-`brush/` checkout does not have them. If that disk is lost the work is lost:
-`git diff` on the server (and commit it to a Brush branch) before doing
-anything risky. Build with `source /home/anoma/.cargo/env && cargo build
---release --bin brush_app` (~3.5 min); `GS_BRUSH_EXE` already points at
-`target/release/brush_app`, so no redeploy step after a build.
+the new CLI flags in `config.rs` - exists **only in the server's
+`/home/anoma/brush` repository**: commit `b0900e6` on local branch
+`gs-server-patches`, on top of upstream release `3edecbb` (19 files across
+`brush-dataset`, `brush-process`, `brush-render`, `brush-render-bwd`,
+`brush-serde`, `brush-train`, `brush-ui`). Your local `brush/` checkout does
+not have them. Notes:
+- `origin` there is upstream (`github.com/ArthurBrussee/brush`) - do **not**
+  push to it. The branch exists on the server disk only; if that disk is lost
+  the work is lost. Back it up off-box (`git bundle create` or `git
+  format-patch 3edecbb`, then `gcloud compute scp` it down) after any change.
+- The server repo has no git identity configured; pass one per command
+  (`git -c user.name=... -c user.email=... commit`) rather than editing config.
+- Work on `gs-server-patches` (it is checked out); commit new Rust changes
+  there instead of leaving them as working-tree edits.
+- Build with `source /home/anoma/.cargo/env && cargo build --release --bin
+  brush_app` (~3.5 min); `GS_BRUSH_EXE` already points at
+  `target/release/brush_app`, so no redeploy step after a build.
 
 ## Major subsystems added this session
 
