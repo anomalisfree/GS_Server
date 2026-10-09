@@ -14,3 +14,7 @@ torchvision>=0.15.0
 
 # Video preview rendering (preview_renderer.py) - headless, no GUI deps needed on a server
 opencv-python-headless>=4.8.0
+
+# Selective bundle adjustment (known_pose_triangulation.py) - lets us lock/free individual
+# camera poses per-image, which the colmap CLI's bundle_adjuster does not expose
+pycolmap>=3.11.0

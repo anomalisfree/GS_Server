@@ -213,7 +213,8 @@ class JobManager:
         pointcloud_path: Optional[str] = None,
         skip_colmap: bool = False,
         dataset_path: Optional[str] = None,
-        auto_start: bool = True
+        auto_start: bool = True,
+        hybrid_config: Optional[dict] = None
     ) -> Job:
         """Create a new job"""
         job_id = str(uuid.uuid4())
@@ -229,6 +230,7 @@ class JobManager:
             config={
                 "colmap": colmap_config or {},
                 "brush": brush_config or {},
+                "hybrid_known_poses": hybrid_config or {},
                 "training_mode": training_mode.value,
                 "pointcloud_path": pointcloud_path,
                 "skip_colmap": skip_colmap,

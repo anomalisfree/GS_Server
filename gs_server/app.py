@@ -148,6 +148,7 @@ async def create_job(
         name=request.name,
         colmap_config=request.colmap_config,
         brush_config=request.brush_config,
+        hybrid_config=request.hybrid_config,
         training_mode=training_mode,
         pointcloud_path=request.pointcloud_path,
         skip_colmap=request.skip_colmap,

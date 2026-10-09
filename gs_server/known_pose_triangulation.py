@@ -43,6 +43,12 @@ from typing import TYPE_CHECKING, Optional
 import numpy as np
 from scipy.spatial import cKDTree
 
+try:
+    import pycolmap
+    HAS_PYCOLMAP = True
+except ImportError:
+    HAS_PYCOLMAP = False
+
 from .models import JobStatus, ColmapProgress, ColmapStage
 from .config import get_config
 
@@ -141,19 +147,194 @@ def _read_ply_xyzrgb(path: Path):
     return xyz, rgb
 
 
-def _write_ply_xyzrgb(path: Path, xyz: np.ndarray, rgb: np.ndarray):
+def _compute_density_clamped_log_scales(xyz: np.ndarray, clamp_percentile: float = 90.0) -> np.ndarray:
+    """Per-point initial gaussian scale from local point density, for writing
+    directly into points3d.ply's scale_0/1/2 fields.
+
+    Same distance formula Brush's own init uses - average of the 2 nearest-
+    neighbor distances, halved (see brush/crates/brush-train/src/
+    splat_init.rs::compute_knn_scales) - but with a MUCH tighter clamp
+    ceiling. Brush's own clamp (10% of the scene's median bounding-box size)
+    is generous enough that a genuinely isolated point can still start out
+    tens of times larger than a typical nearby point: measured on a real
+    hybrid job's merged cloud, Brush's ceiling was 0.68 against a median
+    point spacing of 0.014 (a ~48x gap) - a big head start toward becoming a
+    visible "needle" once training stretches it further along one axis.
+    Capping at a percentile of the cloud's OWN nearest-neighbor-distance
+    distribution instead keeps the ceiling self-calibrating (same rationale
+    as floater_filter.py's median-relative size cutoff) while staying close
+    to the bulk of the data - the same measurement gave a ceiling of 0.030
+    (~2x the median) with this approach, a 22x tighter cap.
+
+    If points3d.ply has scale_0/1/2 present, Brush uses them directly and
+    skips its own KNN computation entirely (brush-serde/src/import.rs -
+    `log_scales: vertex.has_property("scale_0").then(...)`).
+
+    Returns (N,) natural-log scale values (Brush's own pre-activation
+    convention - actual linear scale is exp(this)); isotropic init (same
+    value goes into scale_0/1/2), matching Brush's own default.
+    """
     n = len(xyz)
+    if n < 3:
+        return np.zeros(n, dtype=np.float32)
+    tree = cKDTree(xyz)
+    d, _ = tree.query(xyz, k=3, workers=-1)  # self, 1st, 2nd nearest
+    dist = (d[:, 1] + d[:, 2]) / 4.0
+    cap = float(np.percentile(dist, clamp_percentile))
+    clamped = np.clip(dist, 1e-4, max(cap, 1e-4))
+    return np.log(clamped).astype(np.float32)
+
+
+def _generate_overexposure_masks(images_dir: Path, masks_dir: Path, threshold: int = 250) -> dict:
+    """Generate a per-image training-loss mask that excludes fully overexposed
+    (blown-highlight) pixels - diagnosed as the root cause of a persistent
+    "sparkle" artifact that survived both geometric floater filtering and
+    anisotropy regularization (see git history / CLAUDE.md). In these dark
+    industrial-interior scans, bright light sources/sky visible through gaps
+    blow out to pure white in the source photos (min(R,G,B) > threshold, no
+    gradient at all) - that carries zero recoverable color or geometry
+    information, so the 3DGS optimizer fills the gap with a cluster of
+    poorly-conditioned, brightly-colored splats that fragment into a visible
+    "sparkle" when viewed from other angles.
+
+    Brush's nerfstudio-format loader already looks for a same-named file
+    under a sibling `masks/` directory and treats it as a hard per-pixel loss
+    mask (0 = excluded, 255 = kept) - see brush-dataset/src/formats/mod.rs
+    find_mask_path and brush-train/src/train.rs's alpha_is_mask handling. No
+    Brush/Rust changes needed, just generating these mask files here.
+
+    Uses a pure brightness threshold, not semantic segmentation (unlike
+    mask_generator.py's DeepLabV3 masks, which are COLMAP-only and don't
+    reach Brush's training loss at all) - this is deliberately dumb and
+    cheap, since "fully blown to white" is a well-defined, unambiguous
+    signal regardless of scene content.
+    """
+    from PIL import Image
+
+    masks_dir.mkdir(parents=True, exist_ok=True)
+    image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
+    image_files = sorted(f for f in images_dir.iterdir() if f.suffix.lower() in image_extensions)
+
+    blown_fracs = []
+    for img_path in image_files:
+        img = np.array(Image.open(img_path).convert("RGB"))
+        blown = img.min(axis=2) > threshold
+        mask = np.where(blown, 0, 255).astype(np.uint8)
+        Image.fromarray(mask, mode="L").save(masks_dir / f"{img_path.stem}.png")
+        blown_fracs.append(float(blown.mean()))
+
+    return {
+        "n_images": len(image_files),
+        "mean_blown_pct": round(100 * float(np.mean(blown_fracs)), 3) if blown_fracs else 0.0,
+        "max_blown_pct": round(100 * float(np.max(blown_fracs)), 3) if blown_fracs else 0.0,
+    }
+
+
+def _generate_person_masks(images_dir: Path, masks_dir: Path, dilate_px: int = 25,
+                           max_side: int = 1024, batch_size: int = 4) -> dict:
+    """Mask out people (DeepLabV3, VOC class 15) from Brush's training loss.
+
+    Moving people appear in different places in different photos, so they can't be a consistent
+    3D surface; the optimizer explains them with semi-transparent haze and smeared ghost splats
+    (visible in AU_Las_Vegas renders vs. real photos). Same Brush convention as
+    _generate_overexposure_masks: `masks/<stem>.png`, 0 = excluded from the loss, 255 = kept,
+    full image resolution. mask_generator.py's DeepLabV3 masks are COLMAP-only and never reach
+    Brush's loss, hence this separate path.
+
+    Any mask already at masks_dir/<stem>.png (e.g. the overexposure mask) is AND-ed with the
+    person mask rather than overwritten, so run this AFTER _generate_overexposure_masks.
+    Segmentation runs at `max_side` (more reliable for small/distant people than torchvision's
+    default 520) and the person mask is upsampled to full resolution and dilated by `dilate_px`
+    to cover motion blur and edge pixels. Blocking - call via run_in_executor.
+    """
+    import cv2
+    import torch
+    from PIL import Image
+    from torchvision.models.segmentation import deeplabv3_resnet101, DeepLabV3_ResNet101_Weights
+
+    masks_dir.mkdir(parents=True, exist_ok=True)
+    image_extensions = {".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif"}
+    image_files = sorted(f for f in images_dir.iterdir() if f.suffix.lower() in image_extensions)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = deeplabv3_resnet101(weights=DeepLabV3_ResNet101_Weights.DEFAULT).to(device).eval()
+    mean = torch.tensor([0.485, 0.456, 0.406], device=device).view(1, 3, 1, 1)
+    std = torch.tensor([0.229, 0.224, 0.225], device=device).view(1, 3, 1, 1)
+    kernel = None
+    if dilate_px > 0:
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * dilate_px + 1, 2 * dilate_px + 1))
+
+    person_fracs = []
+    n_with_person = 0
+    try:
+        for start in range(0, len(image_files), batch_size):
+            batch = image_files[start:start + batch_size]
+            full_sizes, tensors = [], []
+            for p in batch:
+                im = Image.open(p).convert("RGB")
+                full_sizes.append(im.size)  # (w, h)
+                scale = max_side / max(im.size)
+                small = im.resize((max(1, round(im.size[0] * scale)), max(1, round(im.size[1] * scale))),
+                                  Image.BILINEAR)
+                tensors.append(torch.from_numpy(np.asarray(small)).permute(2, 0, 1).float() / 255.0)
+            # Batches only stack when all resized images share a shape; otherwise run one by one.
+            groups = [list(range(len(batch)))] if len({t.shape for t in tensors}) == 1 else [[i] for i in range(len(batch))]
+            for g in groups:
+                x = torch.stack([tensors[i] for i in g]).to(device)
+                x = (x - mean) / std
+                with torch.no_grad():
+                    pred = model(x)["out"].argmax(1).cpu().numpy()
+                for k, i in enumerate(g):
+                    w, h = full_sizes[i]
+                    person = cv2.resize((pred[k] == 15).astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST)
+                    if kernel is not None:
+                        person = cv2.dilate(person, kernel)
+                    mask_path = masks_dir / f"{batch[i].stem}.png"
+                    keep = np.full((h, w), 255, dtype=np.uint8)
+                    if mask_path.exists():
+                        existing = np.array(Image.open(mask_path).convert("L"))
+                        if existing.shape == keep.shape:
+                            keep = existing
+                    keep[person > 0] = 0
+                    Image.fromarray(keep, mode="L").save(mask_path)
+                    frac = float((person > 0).mean())
+                    person_fracs.append(frac)
+                    n_with_person += int(frac > 0)
+    finally:
+        del model
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+    return {
+        "n_images": len(image_files),
+        "n_with_person": n_with_person,
+        "mean_person_pct": round(100 * float(np.mean(person_fracs)), 3) if person_fracs else 0.0,
+        "max_person_pct": round(100 * float(np.max(person_fracs)), 3) if person_fracs else 0.0,
+    }
+
+
+def _write_ply_xyzrgb(path: Path, xyz: np.ndarray, rgb: np.ndarray, log_scales: Optional[np.ndarray] = None):
+    n = len(xyz)
+    scale_props = (
+        "property float scale_0\nproperty float scale_1\nproperty float scale_2\n"
+        if log_scales is not None else ""
+    )
     header = (
         "ply\nformat binary_little_endian 1.0\n"
         f"element vertex {n}\n"
         "property float x\nproperty float y\nproperty float z\n"
         "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+        f"{scale_props}"
         "end_header\n"
     )
-    out = np.empty(n, dtype=[('x', '<f4'), ('y', '<f4'), ('z', '<f4'),
-                              ('red', 'u1'), ('green', 'u1'), ('blue', 'u1')])
+    dtype = [('x', '<f4'), ('y', '<f4'), ('z', '<f4'), ('red', 'u1'), ('green', 'u1'), ('blue', 'u1')]
+    if log_scales is not None:
+        dtype += [('scale_0', '<f4'), ('scale_1', '<f4'), ('scale_2', '<f4')]
+    out = np.empty(n, dtype=dtype)
     out['x'], out['y'], out['z'] = xyz[:, 0], xyz[:, 1], xyz[:, 2]
     out['red'], out['green'], out['blue'] = rgb[:, 0], rgb[:, 1], rgb[:, 2]
+    if log_scales is not None:
+        out['scale_0'] = out['scale_1'] = out['scale_2'] = log_scales
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('wb') as f:
         f.write(header.encode('ascii'))
@@ -248,6 +429,97 @@ def _denoise_and_prioritize_colmap(
         "n_before": n_before, "n_after_sor": n_after_sor, "n_after_priority": n_after_priority,
         "colmap_priority_radius": colmap_priority_radius,
     }
+
+
+# ── Selective bundle adjustment ───────────────────────────────────────────────
+
+def _selective_bundle_adjust(
+    triangulated_dir: Path, refined_dir: Path,
+    connected_frames: list, safe_names: dict,
+    min_observation_percentile: float = 50.0,
+):
+    """Refine the known-pose COLMAP model with a SELECTIVE bundle adjustment: camera
+    poses are only allowed to move for images with a triangulated-observation count
+    at or above `min_observation_percentile` of this job's own distribution — enough
+    independent, verified 2D-3D correspondences to constrain a pose reliably. Every
+    other camera's pose is locked exactly as given (matching the plain points-only
+    bundle_adjuster call below), so this can't reproduce the "ghost duplicate" cloud
+    that came from letting *all* cameras move (see the comment on that call — weakly-
+    matched cameras in these low-texture scenes are barely constrained and drift
+    almost freely under full refine_extrinsics=1). 3D points are always refined,
+    same as before.
+
+    Points that end up badly placed (e.g. a locked-only point resting on a near-
+    degenerate pair of viewing rays) are not specially handled here - the existing
+    bbox/track-length sanity filters applied to the triangulation output downstream
+    already exist for exactly this failure mode and catch it the same way regardless
+    of whether the point came from this path or the plain bundle_adjuster.
+
+    Returns (used: bool, refined_poses: dict[file_path -> 4x4 nerf c2w list]).
+    refined_poses is empty (and used=False) if pycolmap is unavailable, no image is
+    registered, or nothing clears the observation bar.
+    """
+    if not HAS_PYCOLMAP:
+        return False, {}
+
+    recon = pycolmap.Reconstruction(str(triangulated_dir))
+    reg_ids = recon.reg_image_ids()
+    if not reg_ids:
+        return False, {}
+
+    counts = {iid: recon.image(iid).num_points3D for iid in reg_ids}
+    vals = np.array(list(counts.values()))
+    threshold = float(np.percentile(vals, min_observation_percentile))
+    well_ids = {iid for iid in reg_ids if counts[iid] >= threshold and counts[iid] > 0}
+    weak_ids = set(reg_ids) - well_ids
+    if not well_ids:
+        return False, {}
+    if not weak_ids:
+        # Keep at least one image locked as a gauge anchor so the whole
+        # reconstruction can't translate/rotate freely with nothing to pin it.
+        anchor = min(reg_ids, key=lambda i: counts[i])
+        weak_ids = {anchor}
+        well_ids.discard(anchor)
+
+    config = pycolmap.BundleAdjustmentConfig()
+    for iid in reg_ids:
+        config.add_image(iid)
+    for iid in weak_ids:
+        config.set_constant_rig_from_world_pose(recon.image(iid).frame_id)
+    for cam_id in recon.cameras:
+        config.set_constant_cam_intrinsics(cam_id)
+
+    options = pycolmap.BundleAdjustmentOptions()
+    options.refine_focal_length = False
+    options.refine_principal_point = False
+    options.refine_extra_params = False
+    options.refine_sensor_from_rig = False
+    options.print_summary = False
+
+    adjuster = pycolmap.create_default_bundle_adjuster(options, config, recon)
+    adjuster.solve()
+    recon.write_binary(str(refined_dir))
+
+    name_to_frame = {safe_names[fr["file_path"]]: fr for fr in connected_frames}
+    refined_poses = {}
+    for iid in well_ids:
+        image = recon.image(iid)
+        frame = name_to_frame.get(image.name)
+        if frame is None:
+            continue
+        w2c = image.cam_from_world()
+        R_c2w = w2c.rotation.matrix().T
+        t_c2w = -R_c2w @ w2c.translation
+        c2w = np.eye(4)
+        c2w[:3, :3] = R_c2w
+        c2w[:3, 3] = t_c2w
+        refined_poses[frame["file_path"]] = _undo_nerf_flip(c2w).tolist()  # self-inverse
+
+    logger.info(
+        f"[KNOWN-POSE-COLMAP] Selective bundle adjustment: {len(well_ids)}/{len(reg_ids)} "
+        f"camera poses refined (>= {threshold:.0f} observations), {len(weak_ids)} locked"
+    )
+    return True, refined_poses
 
 
 # ── COLMAP known-pose model writer ───────────────────────────────────────────
@@ -445,31 +717,63 @@ class KnownPoseTriangulator:
                 "--output_path", str(triangulated_dir),
             ])
 
-            # Bundle adjustment refine — POINTS ONLY. COLMAP's bundle_adjuster defaults
-            # to refine_extrinsics=1 (also refines camera poses), which is exactly what
-            # we don't want here: the known poses are trusted (LiDAR/IMU tracking), and
-            # for the weakly-matched cameras in these low-texture scenes, letting BA move
-            # them is what produced a second, rotated "ghost" copy of the point cloud in
-            # testing (only cameras/points with few/noisy matches drift, since they're
-            # barely constrained — see Batch12_Scans_Training_Report_2026-08-13.md).
-            # Lock every camera parameter; only 3D point positions may move.
+            # Bundle adjustment refine. Two modes:
+            #
+            # - selective (opt-in, requires pycolmap): only images with enough
+            #   triangulated observations to reliably constrain a pose are allowed to
+            #   move; every weakly-matched camera stays exactly as given. This can
+            #   correct real drift in the source LiDAR/IMU poses where there's enough
+            #   visual evidence to do so, without the failure mode below.
+            #
+            # - default (points only): COLMAP's bundle_adjuster defaults to
+            #   refine_extrinsics=1 (also refines camera poses), which is exactly what
+            #   we don't want here: the known poses are trusted (LiDAR/IMU tracking),
+            #   and for the weakly-matched cameras in these low-texture scenes, letting
+            #   BA move them is what produced a second, rotated "ghost" copy of the
+            #   point cloud in testing (only cameras/points with few/noisy matches
+            #   drift, since they're barely constrained — see
+            #   Batch12_Scans_Training_Report_2026-08-13.md). Lock every camera
+            #   parameter; only 3D point positions may move.
             final_model_dir = triangulated_dir
-            try:
-                await self._job_manager.update_job_progress(
-                    job_id, message="Known-pose triangulation: bundle-adjusting (points only)...",
-                    overall_progress=45.0)
-                await self._run([
-                    "bundle_adjuster",
-                    "--input_path", str(triangulated_dir),
-                    "--output_path", str(refined_dir),
-                    "--BundleAdjustment.refine_extrinsics", "0",
-                    "--BundleAdjustment.refine_focal_length", "0",
-                    "--BundleAdjustment.refine_principal_point", "0",
-                    "--BundleAdjustment.refine_extra_params", "0",
-                ])
-                final_model_dir = refined_dir
-            except Exception as e:
-                logger.warning(f"bundle_adjuster failed, using un-refined triangulation: {e}")
+            refined_poses = {}
+            used_selective = False
+            if job_colmap_config.get("selective_pose_refine_enabled", False):
+                min_percentile = job_colmap_config.get("selective_pose_refine_min_percentile", 50.0)
+                try:
+                    await self._job_manager.update_job_progress(
+                        job_id, message="Known-pose triangulation: selective bundle adjustment "
+                                         "(refining well-observed camera poses + points)...",
+                        overall_progress=45.0)
+                    used_selective, refined_poses = await asyncio.get_running_loop().run_in_executor(
+                        None, _selective_bundle_adjust,
+                        triangulated_dir, refined_dir, connected_frames, safe_names, min_percentile)
+                    if used_selective:
+                        final_model_dir = refined_dir
+                    else:
+                        logger.warning("Selective pose refine unavailable/skipped (pycolmap missing "
+                                        "or no image met the observation bar) - falling back to "
+                                        "points-only bundle_adjuster")
+                except Exception as e:
+                    logger.warning(f"Selective bundle adjustment failed, falling back to "
+                                    f"points-only bundle_adjuster: {e}")
+
+            if not used_selective:
+                try:
+                    await self._job_manager.update_job_progress(
+                        job_id, message="Known-pose triangulation: bundle-adjusting (points only)...",
+                        overall_progress=45.0)
+                    await self._run([
+                        "bundle_adjuster",
+                        "--input_path", str(triangulated_dir),
+                        "--output_path", str(refined_dir),
+                        "--BundleAdjustment.refine_extrinsics", "0",
+                        "--BundleAdjustment.refine_focal_length", "0",
+                        "--BundleAdjustment.refine_principal_point", "0",
+                        "--BundleAdjustment.refine_extra_params", "0",
+                    ])
+                    final_model_dir = refined_dir
+                except Exception as e:
+                    logger.warning(f"bundle_adjuster failed, using un-refined triangulation: {e}")
 
             await self._run([
                 "model_converter",
@@ -535,11 +839,34 @@ class KnownPoseTriangulator:
             merged_xyz = np.concatenate([lidar_xyz, colmap_xyz], axis=0) if len(colmap_xyz) else lidar_xyz
             merged_rgb = np.concatenate([lidar_rgb, colmap_rgb], axis=0) if len(colmap_rgb) else lidar_rgb
 
+            scale_clamp_enabled = job_hybrid_config.get("init_scale_clamp_enabled", True)
+            merged_log_scales = None
+            if scale_clamp_enabled:
+                clamp_percentile = job_hybrid_config.get("init_scale_clamp_percentile", 90.0)
+                merged_log_scales = _compute_density_clamped_log_scales(merged_xyz, clamp_percentile)
+                print(
+                    f"[KNOWN-POSE-COLMAP] Density-clamped init scale (p{clamp_percentile}): "
+                    f"ceiling={np.exp(merged_log_scales.max()):.5f}"
+                )
+
             hybrid_dir = job.job_dir / "inputs" / "hybrid_dataset"
             hybrid_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(transforms_path, hybrid_dir / "transforms.json")
+            # Write (not copy) transforms.json from the `transforms` dict already
+            # loaded into memory above, patching in any selectively-refined poses -
+            # this is also what makes writing safe on a retried job where
+            # transforms_path was already rewritten to this same file by a previous
+            # partial attempt (see JobManager's restart recovery): we're not doing a
+            # copy of a file onto itself, just re-serializing data we already hold.
+            if refined_poses:
+                for fr in transforms["frames"]:
+                    new_pose = refined_poses.get(fr["file_path"])
+                    if new_pose is not None:
+                        fr["transform_matrix"] = new_pose
+                print(f"[KNOWN-POSE-COLMAP] Applied {len(refined_poses)} selectively-refined "
+                      f"camera poses to transforms.json")
+            (hybrid_dir / "transforms.json").write_text(json.dumps(transforms, indent=2), encoding="utf-8")
             merged_ply_path = hybrid_dir / "points3d.ply"
-            _write_ply_xyzrgb(merged_ply_path, merged_xyz, merged_rgb)
+            _write_ply_xyzrgb(merged_ply_path, merged_xyz, merged_rgb, merged_log_scales)
 
             images_link = hybrid_dir / "images"
             if images_link.exists() or images_link.is_symlink():
@@ -548,6 +875,45 @@ class KnownPoseTriangulator:
                 else:
                     shutil.rmtree(images_link)
             images_link.symlink_to(images_dir.resolve(), target_is_directory=True)
+
+            # Optional depth supervision (see brush-train's --depth-loss-weight): if the
+            # source dataset ships a sibling "depth/" directory (same auto-discovery
+            # convention Brush already uses for "masks/"), carry it through unchanged.
+            depth_dir = dataset_path / "depth"
+            if depth_dir.is_dir():
+                depth_link = hybrid_dir / "depth"
+                if depth_link.exists() or depth_link.is_symlink():
+                    if depth_link.is_symlink() or depth_link.is_file():
+                        depth_link.unlink()
+                    else:
+                        shutil.rmtree(depth_link)
+                depth_link.symlink_to(depth_dir.resolve(), target_is_directory=True)
+
+            overexposure_enabled = job_hybrid_config.get("overexposure_mask_enabled", True)
+            if overexposure_enabled:
+                overexposure_threshold = job_hybrid_config.get("overexposure_threshold", 250)
+                mask_stats = _generate_overexposure_masks(
+                    images_dir, hybrid_dir / "masks", threshold=overexposure_threshold
+                )
+                print(
+                    f"[KNOWN-POSE-COLMAP] Overexposure masks ({mask_stats['n_images']} images, "
+                    f"threshold={overexposure_threshold}): mean blown={mask_stats['mean_blown_pct']}%, "
+                    f"max blown={mask_stats['max_blown_pct']}%"
+                )
+
+            if job_hybrid_config.get("person_mask_enabled", False):
+                dilate_px = int(job_hybrid_config.get("person_mask_dilate_px", 25))
+                await self._job_manager.update_job_progress(
+                    job_id, message="Generating person masks (DeepLabV3)...", overall_progress=48.0)
+                loop = asyncio.get_running_loop()
+                person_stats = await loop.run_in_executor(
+                    None, lambda: _generate_person_masks(images_dir, hybrid_dir / "masks", dilate_px=dilate_px)
+                )
+                print(
+                    f"[KNOWN-POSE-COLMAP] Person masks ({person_stats['n_images']} images, "
+                    f"dilate={dilate_px}px): {person_stats['n_with_person']} contain people, "
+                    f"mean masked={person_stats['mean_person_pct']}%, max={person_stats['max_person_pct']}%"
+                )
 
             job.config["dataset_path"] = str(hybrid_dir)
 

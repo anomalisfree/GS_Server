@@ -18,6 +18,22 @@ first, then cluster filter - each writes to the same "_filtered.ply" output):
   spatial isolation (a splat can be perfectly ordinary in shape/size and
   still be junk if it's sitting alone in empty space far from everything
   else), so this population survives it entirely.
+
+- filter_photometric_inconsistency: a third, independent pass added after
+  investigating the AU_Las_Vegas "floating tile" artifact, which survived
+  BOTH filters above plus two training-time regularizers (position-anchor,
+  aniso-reg) - see that investigation report. Diagnosis found the offending
+  splats were only moderately anisotropic and moderately larger than normal
+  (not the extreme outliers either filter above targets), but consistently
+  had a much higher live-training photometric residual (see brush-train's
+  photo_consistency_enabled) than their surroundings - i.e. they never
+  converge to a stable color/position because they're being asked to
+  explain inconsistent observations from different viewing angles. This is
+  the first signal in this investigation that actually separates the known
+  floaters cleanly (median 99.5th percentile of the model's own distribution,
+  vs no separation at all for every geometric signal tried). Only meaningful
+  for models trained with photo_consistency_enabled (no-ops otherwise, since
+  the PLY won't have the required properties).
 """
 
 import numpy as np
@@ -226,6 +242,72 @@ def filter_isolated_clusters(in_path, out_path, k=8, radius_multiplier=5.0, bbox
         "main_component_frac": round(float(comp_sizes[main_label]) / n, 4),
         "radius": radius,
         "bbox_padding": bbox_padding,
+    }
+
+
+def filter_photometric_inconsistency(in_path, out_path, percentile=97.5, min_observations=30):
+    """Remove Gaussians whose live-training photo-consistency residual
+    (photo_resid_avg, accumulated by Brush from photo_consistency_warmup_steps
+    onward - see photo_consistency_enabled) sits in the extreme tail of THIS
+    model's own distribution.
+
+    The threshold is a percentile of this model's own photo_resid_avg
+    distribution rather than an absolute value - same self-calibrating
+    rationale as filter_needle_floaters' size cutoff (residual magnitude
+    depends on scene content/texture density, an absolute cutoff tuned on
+    one model would misfire on another). Validated against the AU_Las_Vegas
+    floating-tile artifact: known floaters landed at a median 99.5th
+    percentile here, vs an even spread across the whole distribution for
+    filter_needle_floaters'/filter_isolated_clusters' geometric signals -
+    the cleanest separation found in that investigation, though still not a
+    clean 100% cut (~60-80% recall depending on percentile chosen), so this
+    is a genuine probabilistic filter, not a hard rule.
+
+    `min_observations` guards against noisy stats from splats only sampled a
+    handful of times (e.g. created very late in training, or rarely
+    visible) - their average residual isn't trustworthy either way, so they
+    are left untouched regardless of their nominal value.
+
+    Returns a stats dict. If the PLY has no photo_resid_avg/photo_resid_count
+    properties (the model wasn't trained with photo_consistency_enabled), or
+    too few splats have enough observations to calibrate a threshold, copies
+    the file through unchanged and returns skipped=True.
+    """
+    header_lines, data = _read_ply(in_path)
+
+    if not {"photo_resid_avg", "photo_resid_count"} <= set(data.dtype.names):
+        _write_ply(out_path, header_lines, data)
+        return {
+            "skipped": True,
+            "input_count": int(len(data)),
+            "reason": "no photo_resid_avg/photo_resid_count properties (photo_consistency_enabled was off)",
+        }
+
+    n = len(data)
+    count = data["photo_resid_count"]
+    avg = data["photo_resid_avg"]
+    has_enough = count >= min_observations
+
+    if has_enough.sum() < 100:
+        _write_ply(out_path, header_lines, data)
+        return {"skipped": True, "input_count": n, "reason": "too few splats with enough observations to calibrate"}
+
+    threshold = float(np.percentile(avg[has_enough], percentile))
+    remove = has_enough & (avg > threshold)
+    filtered = data[~remove]
+
+    _write_ply(out_path, header_lines, filtered)
+
+    return {
+        "skipped": False,
+        "input_count": n,
+        "output_count": int(len(filtered)),
+        "removed_count": int(remove.sum()),
+        "removed_pct": round(100.0 * remove.sum() / n, 3) if n else 0.0,
+        "percentile": percentile,
+        "threshold": threshold,
+        "min_observations": min_observations,
+        "splats_with_enough_observations": int(has_enough.sum()),
     }
 
 

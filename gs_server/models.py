@@ -122,6 +122,13 @@ class CreateJobRequest(BaseModel):
     # Переопределения настроек (опционально)
     colmap_config: Optional[Dict[str, Any]] = None
     brush_config: Optional[Dict[str, Any]] = None
+    hybrid_config: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description=(
+            "hybrid_known_poses only: per-job options for the known-pose triangulation step "
+            "(e.g. sor_k, overexposure_mask_enabled, person_mask_enabled, person_mask_dilate_px)"
+        )
+    )
     training_mode: Optional[TrainingMode] = Field(
         default=None,
         description=(

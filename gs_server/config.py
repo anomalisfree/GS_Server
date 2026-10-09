@@ -119,7 +119,55 @@ class BrushConfig:
     # fix (targeted post-training anisotropy filtering, not a global loss term).
     opac_decay: float = 1e-9
     scale_decay: float = 1e-8
-    
+
+    # Real gradient-based anisotropy regularization (Brush's own loss, added directly to
+    # the training loop - see brush/crates/brush-train/src/train.rs), NOT another global
+    # decay term like opac_decay/scale_decay above. Those shrink every splat's magnitude
+    # uniformly regardless of shape, which is exactly why the comment above found they
+    # "just prune splat count indiscriminately" without touching anisotropy. This instead
+    # penalizes the max/min scale-axis RATIO, and only beyond aniso_reg_ratio_threshold -
+    # ordinary anisotropic splats (flat walls/floors, 10-50x) are untouched, only the
+    # extreme tail is pushed back. 0 = disabled (opt-in; untested at scale yet).
+    aniso_reg_weight: float = 0.0
+    aniso_reg_ratio_threshold: float = 50.0
+
+    # Depth supervision (Brush's own loss - see brush/crates/brush-train/src/train.rs
+    # and brush-render's new depth render channel). Compares the renderer's rendered
+    # depth against a ground-truth depth map placed in a sibling "depth/" directory
+    # next to "images/" (same auto-discovery convention as "masks/"). Only meaningful
+    # for datasets that actually have per-view depth (e.g. LiDAR/ARKit) - 0 disables it.
+    depth_loss_weight: float = 0.0
+    # Beyond this range (meters), LiDAR/ARKit depth tends to silently return a
+    # plausible-looking but wrong value rather than failing - first real test run
+    # (no cutoff) visibly corrupted far surfaces (a domed ceiling lost most of its
+    # geometry/color) while not fixing the artifact it was meant to help with.
+    # Matches Apple's own ~5m LiDAR scanner spec.
+    depth_max_range: float = 5.0
+
+    # Position anchor (Brush's own loss - see train.rs): pulls each Gaussian's mean
+    # back toward the point-cloud position it (or its splitting ancestor) was
+    # created at, once it drifts beyond position_anchor_max_dist. A direct 3D prior,
+    # no camera rendering needed - unlike depth_loss_weight this works for any
+    # dataset that has an initializing point cloud (pointcloud_only/
+    # hybrid_known_poses), not just ones with per-view depth maps. 0 disables it.
+    position_anchor_weight: float = 0.0
+    position_anchor_max_dist: float = 0.2
+
+    # Photo-consistency tracking (Brush's own accumulator - see train.rs):
+    # measures the real rendering residual at each splat's own projected
+    # screen position, averaged across every training view it's visible in
+    # from photo_consistency_warmup_steps onward. Purely additive/diagnostic -
+    # never enters the training loss, only exported alongside the model (as
+    # extra photo_resid_avg/photo_resid_count PLY properties) for
+    # filter_photometric_inconsistency (floater_filter.py) to consume. Built
+    # after position_anchor and aniso_reg (both training-time) and three
+    # different post-hoc geometric filters all failed to isolate the
+    # AU_Las_Vegas floating-tile artifact - see that investigation report.
+    # False (default) adds zero training overhead and produces byte-identical
+    # PLY output to before this option existed.
+    photo_consistency_enabled: bool = False
+    photo_consistency_warmup_steps: int = 15000
+
     # Loss
     ssim_weight: float = 0.3
 
@@ -163,6 +211,26 @@ class BrushConfig:
     # anything).
     cluster_filter_enabled: bool = True
     cluster_filter_radius_multiplier: float = 5.0
+
+    # Third, separate post-training filter pass (see
+    # floater_filter.filter_photometric_inconsistency): removes splats whose
+    # live-training photometric residual (photo_resid_avg, only present when
+    # photo_consistency_enabled was set for the job) sits in the extreme tail
+    # of this model's own distribution. Built after position_anchor/aniso_reg
+    # (training-time) and the two filters above (geometric/shape-based) all
+    # failed to isolate the AU_Las_Vegas floating-tile artifact - see that
+    # investigation report. Only takes effect when the model actually has
+    # photo_resid_avg data (no-ops otherwise).
+    # DEFAULT OFF: measured against the real training photos (59 views,
+    # PSNR of render vs photo) it makes the model WORSE - 18.15 dB unfiltered
+    # -> 17.53 dB at percentile 97.5 -> 17.24 dB at 95. The "floating tile"
+    # artifact it was built to remove turned out to be real floor inlay (the
+    # model reproduces it tile for tile vs the real photos); the splats it
+    # removes are mostly large blurry foreground/haze splats that still carry
+    # real image content. Kept as an opt-in diagnostic only.
+    photo_consistency_filter_enabled: bool = False
+    photo_consistency_filter_percentile: float = 97.5
+    photo_consistency_filter_min_observations: int = 30
 
 
 @dataclass
@@ -239,6 +307,42 @@ def load_config() -> AppConfig:
     ).lower() == "true"
     config.brush.cluster_filter_radius_multiplier = float(
         os.getenv("BRUSH_CLUSTER_FILTER_RADIUS_MULTIPLIER", config.brush.cluster_filter_radius_multiplier)
+    )
+    config.brush.aniso_reg_weight = float(
+        os.getenv("BRUSH_ANISO_REG_WEIGHT", config.brush.aniso_reg_weight)
+    )
+    config.brush.aniso_reg_ratio_threshold = float(
+        os.getenv("BRUSH_ANISO_REG_RATIO_THRESHOLD", config.brush.aniso_reg_ratio_threshold)
+    )
+    config.brush.depth_loss_weight = float(
+        os.getenv("BRUSH_DEPTH_LOSS_WEIGHT", config.brush.depth_loss_weight)
+    )
+    config.brush.depth_max_range = float(
+        os.getenv("BRUSH_DEPTH_MAX_RANGE", config.brush.depth_max_range)
+    )
+    config.brush.position_anchor_weight = float(
+        os.getenv("BRUSH_POSITION_ANCHOR_WEIGHT", config.brush.position_anchor_weight)
+    )
+    config.brush.position_anchor_max_dist = float(
+        os.getenv("BRUSH_POSITION_ANCHOR_MAX_DIST", config.brush.position_anchor_max_dist)
+    )
+    config.brush.photo_consistency_enabled = os.getenv(
+        "BRUSH_PHOTO_CONSISTENCY_ENABLED", str(config.brush.photo_consistency_enabled).lower()
+    ).lower() == "true"
+    config.brush.photo_consistency_warmup_steps = int(
+        os.getenv("BRUSH_PHOTO_CONSISTENCY_WARMUP_STEPS", config.brush.photo_consistency_warmup_steps)
+    )
+    config.brush.photo_consistency_filter_enabled = os.getenv(
+        "BRUSH_PHOTO_CONSISTENCY_FILTER_ENABLED", str(config.brush.photo_consistency_filter_enabled).lower()
+    ).lower() == "true"
+    config.brush.photo_consistency_filter_percentile = float(
+        os.getenv("BRUSH_PHOTO_CONSISTENCY_FILTER_PERCENTILE", config.brush.photo_consistency_filter_percentile)
+    )
+    config.brush.photo_consistency_filter_min_observations = int(
+        os.getenv(
+            "BRUSH_PHOTO_CONSISTENCY_FILTER_MIN_OBSERVATIONS",
+            config.brush.photo_consistency_filter_min_observations,
+        )
     )
 
     # Masking

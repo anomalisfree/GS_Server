@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Optional
 
 from .models import JobStatus, TrainingProgress
 from .config import get_config
-from .floater_filter import filter_needle_floaters, filter_isolated_clusters
+from .floater_filter import filter_needle_floaters, filter_isolated_clusters, filter_photometric_inconsistency
 
 if TYPE_CHECKING:
     from .job_manager import JobManager, Job
@@ -130,6 +130,24 @@ class BrushRunner:
             opac_decay   = job_brush_config.get("opac_decay",   brush_config.opac_decay)
             scale_decay  = job_brush_config.get("scale_decay",  brush_config.scale_decay)
             ssim_weight  = job_brush_config.get("ssim_weight",  brush_config.ssim_weight)
+            aniso_reg_weight = job_brush_config.get("aniso_reg_weight", brush_config.aniso_reg_weight)
+            aniso_reg_ratio_threshold = job_brush_config.get(
+                "aniso_reg_ratio_threshold", brush_config.aniso_reg_ratio_threshold
+            )
+            depth_loss_weight = job_brush_config.get("depth_loss_weight", brush_config.depth_loss_weight)
+            depth_max_range = job_brush_config.get("depth_max_range", brush_config.depth_max_range)
+            position_anchor_weight = job_brush_config.get(
+                "position_anchor_weight", brush_config.position_anchor_weight
+            )
+            position_anchor_max_dist = job_brush_config.get(
+                "position_anchor_max_dist", brush_config.position_anchor_max_dist
+            )
+            photo_consistency_enabled = job_brush_config.get(
+                "photo_consistency_enabled", brush_config.photo_consistency_enabled
+            )
+            photo_consistency_warmup_steps = job_brush_config.get(
+                "photo_consistency_warmup_steps", brush_config.photo_consistency_warmup_steps
+            )
             cmd.extend([
                 "--growth-grad-threshold",   str(growth_grad),
                 "--growth-select-fraction",  str(growth_frac),
@@ -140,7 +158,27 @@ class BrushRunner:
                 "--opac-loss-weight",        str(opac_decay),
                 "--scale-loss-weight",       str(scale_decay),
             ])
-            
+            if aniso_reg_weight > 0.0:
+                cmd.extend([
+                    "--aniso-reg-weight",         str(aniso_reg_weight),
+                    "--aniso-reg-ratio-threshold", str(aniso_reg_ratio_threshold),
+                ])
+            if depth_loss_weight > 0.0:
+                cmd.extend([
+                    "--depth-loss-weight", str(depth_loss_weight),
+                    "--depth-max-range",   str(depth_max_range),
+                ])
+            if position_anchor_weight > 0.0:
+                cmd.extend([
+                    "--position-anchor-weight",   str(position_anchor_weight),
+                    "--position-anchor-max-dist", str(position_anchor_max_dist),
+                ])
+            if photo_consistency_enabled:
+                cmd.extend([
+                    "--photo-consistency-enabled",
+                    "--photo-consistency-warmup-steps", str(photo_consistency_warmup_steps),
+                ])
+
             # Устанавливаем переменные окружения для отключения интерактивного вывода
             # и включения логов
             env = os.environ.copy()
@@ -417,6 +455,39 @@ class BrushRunner:
                         final_size = filtered_path.stat().st_size
                 except Exception as e:
                     logger.warning(f"Cluster filter failed, keeping model as-is: {e}")
+
+            # Third, independent post-training pass (see floater_filter.py's
+            # docstring): removes splats whose live-training photometric
+            # residual sits in the extreme tail of this model's own
+            # distribution - a signal the two geometric filters above can't
+            # see at all. No-ops automatically on any model that wasn't
+            # trained with photo_consistency_enabled (no photo_resid_avg
+            # data to work with), so this is safe to leave on by default.
+            photo_filter_enabled = job_brush_config.get(
+                "photo_consistency_filter_enabled", brush_config.photo_consistency_filter_enabled
+            )
+            if photo_filter_enabled:
+                photo_filter_percentile = job_brush_config.get(
+                    "photo_consistency_filter_percentile", brush_config.photo_consistency_filter_percentile
+                )
+                photo_filter_min_obs = job_brush_config.get(
+                    "photo_consistency_filter_min_observations",
+                    brush_config.photo_consistency_filter_min_observations,
+                )
+                try:
+                    stats = filter_photometric_inconsistency(
+                        final_model, str(filtered_path), photo_filter_percentile, photo_filter_min_obs
+                    )
+                    if not stats.get("skipped"):
+                        print(
+                            f"[BRUSH] Photo-consistency filter removed {stats['removed_count']} "
+                            f"({stats['removed_pct']}%) inconsistent splats "
+                            f"(percentile {stats['percentile']}, threshold {stats['threshold']:.4f})"
+                        )
+                        final_model = str(filtered_path)
+                        final_size = filtered_path.stat().st_size
+                except Exception as e:
+                    logger.warning(f"Photo-consistency filter failed, keeping model as-is: {e}")
 
             # Обновить финальный прогресс тренировки
             await self._job_manager.update_job_progress(
