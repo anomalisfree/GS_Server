@@ -233,7 +233,7 @@ def extract_ply_from_e57(e57_path: str, ply_path: Path,
 def convert(data_dir: str, e57_path: str, out_dir: str,
             write_ply_flag: bool = True,
             e57_step: int = 2, max_pts_per_scan: int = 50_000,
-            copy_images: bool = True):
+            copy_images: bool = True, pose_scale: float = 1.0):
 
     data_dir = Path(data_dir)
     out_dir  = Path(out_dir)
@@ -288,8 +288,14 @@ def convert(data_dir: str, e57_path: str, out_dir: str,
             print(f"  [WARN] no intrinsics for {rel_path}")
             continue
 
+        # Some capture sources export pose translation in cm/mm rather than meters
+        # (see batch_prepare_datasets.py's per-dataset ply scale detection for the
+        # equivalent issue on the point-cloud side) - scale it to meters first.
+        mat_scaled = mat_opencv.copy()
+        mat_scaled[:3, 3] *= pose_scale
+
         # Convert c2w: OpenCV → NeRF convention
-        c2w_nerf = opencv_c2w_to_nerf(mat_opencv)
+        c2w_nerf = opencv_c2w_to_nerf(mat_scaled)
 
         frame_entry = {
             "file_path": f"images/{src_img.name}",
@@ -381,6 +387,9 @@ if __name__ == "__main__":
                         help="Max points per scan in PLY (default 50000)")
     parser.add_argument("--no-copy",     action="store_true",
                         help="Do not copy images (assumes out-dir == data-dir or images already there)")
+    parser.add_argument("--pose-scale",  type=float, default=1.0,
+                        help="Multiply raw SensorFrames translation by this to get meters "
+                             "(e.g. 0.01 if the source exported poses in centimeters)")
     args = parser.parse_args()
 
     convert(
@@ -391,4 +400,5 @@ if __name__ == "__main__":
         e57_step       = args.e57_step,
         max_pts_per_scan = args.max_pts,
         copy_images    = not args.no_copy,
+        pose_scale     = args.pose_scale,
     )
