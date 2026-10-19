@@ -6,6 +6,11 @@
 ## 0. Коротко (чек-лист)
 
 1. `git clone https://github.com/anomalisfree/GS_Server.git` (код, документация, `tools/`, `patches/`).
+   **Важно:** на момент передачи последние 11 коммитов (включая эту инструкцию) **не отправлены на GitHub**:
+   `git push` с этого ПК упал с «Invalid username or token». Сначала выполните вход (раздел 2.1) и
+   `git push origin main`. Если GitHub недоступен, возьмите готовый файл
+   `C:\Space\Projects\VSProjects\GS_Sever_backup\GS_Server_full_2026-10-19.bundle` (45 МБ, вся история),
+   скопируйте на новый ПК и выполните `git clone GS_Server_full_2026-10-19.bundle GS_Server`.
 2. Установить Python 3.11 и Google Cloud SDK; `pip install -r tools/requirements.txt`.
 3. `gcloud auth login alex.lisavets@q3dsensing.com`, `gcloud config set project dgs-training`.
 4. Скопировать вручную то, чего нет в git: папку `data/` (минимум `data/CameraSet`, 1,3 ГБ + `results` 0,2 ГБ).
@@ -50,6 +55,17 @@ pip install -r tools/requirements.txt
 Дополнительно к варианту А: `pip install -r gs_server/requirements.txt` (в нём torch), установить COLMAP
 (Windows: распаковать в `colmap/`, Linux: `apt install colmap`) и собрать Brush (раздел 5, нужен Rust).
 Подробности и переменные окружения: `README.md`. Для обычной работы это не нужно.
+
+### 2.1 Вход в GitHub (чтобы работали `git push` и `git pull`)
+
+Парольный вход GitHub не поддерживает. Любой из способов:
+
+* `winget install GitHub.cli`, затем `gh auth login` (браузер) и `gh auth setup-git`;
+* или Personal Access Token (GitHub -> Settings -> Developer settings), его вводят вместо пароля при первом
+  `git push`; Git Credential Manager (идёт с Git for Windows) запомнит его.
+
+Токены и пароли никому (в том числе Claude) не передавайте в чат: вход выполняйте сами. Пока вход не
+сделан, `git push origin main` с этого ПК отправляет в Git только ошибку авторизации, ничего не теряется.
 
 ## 3. Доступ к серверу (Google Cloud)
 
