@@ -148,6 +148,18 @@ After starting the server, access the interactive API documentation at:
 | `/jobs/{id}/model` | GET | Download trained model |
 | `/jobs/{id}/ws` | WS | WebSocket progress updates |
 
+### Full documentation
+
+| Document | What it covers |
+|---|---|
+| [`COMPLETE_USER_GUIDE_EN.html`](COMPLETE_USER_GUIDE_EN.html) (source: `.md`) | One self-contained file: the Object Scanner iPhone app **and** this server - every endpoint, parameter, mode, troubleshooting |
+| [`SERVER_USER_MANUAL_EN.md`](SERVER_USER_MANUAL_EN.md) / [`SERVER_USER_MANUAL.md`](SERVER_USER_MANUAL.md) | Server-only manual (English / Russian) |
+| [`CLIENT_TRAINING_MODES_DEVELOPER_GUIDE.md`](CLIENT_TRAINING_MODES_DEVELOPER_GUIDE.md) | Training modes, preview and camera-position APIs for client developers |
+| [`CameraSet_Training_Report_2026-10-19.md`](CameraSet_Training_Report_2026-10-19.md) | Latest experiment: training from walking videos, speed/quality findings |
+| [`tools/README.md`](tools/README.md) | Helper scripts: video to frames, submit/wait for jobs, server diagnostics |
+| [`patches/README.md`](patches/README.md) | The Rust patch to Brush the server depends on |
+| [`CLAUDE.md`](CLAUDE.md), [`CONTINUE_ON_ANOTHER_COMPUTER.md`](CONTINUE_ON_ANOTHER_COMPUTER.md) | Operating the production server; resuming work on another machine |
+
 ## 💻 Client Examples
 
 ### Python

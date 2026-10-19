@@ -50,6 +50,23 @@ it stale.
   but the vocab tree **path** is only read from this global setting - putting
   `vocab_tree_path` in a job's `colmap_config` is silently ignored. Edit the
   unit with `sudo`, then `systemctl daemon-reload` and restart.
+- **Where things are on the VM.** Job data is in `/data/jobs` (`GS_JOBS_DIR`; a
+  492 GB disk, **check `df -h /data` before big jobs** - at 100 % COLMAP dies with
+  `SQLite error: database or disk is full`; it was full on 2026-10-12 and ~88 % after
+  clean-up). The code is `/home/anoma/gs_server/gs_server/`, and `/home/anoma/gs_server`
+  itself also has an `__init__.py`, so a script that does `from gs_server import ...`
+  must put `/home/anoma/gs_server` first on `sys.path` or it imports the wrong package.
+  The service runs `python3.11`; the system `python3` has **no OpenCV**.
+- **Stopping a running job.** `cancel` does not kill COLMAP/Brush *and* the single
+  worker stays blocked until that process exits (nothing else can start). To really
+  stop it: `cancel` the job first, then `sudo systemctl restart gs-server` (only when
+  no other job is active). On start the service **re-queues every job it finds in
+  `colmap_running`/`training`** from scratch, which is why the cancel must come first
+  (a `cancelled` job is not re-queued).
+- **gcloud tokens expire within hours** (sometimes between two consecutive commands):
+  on "Reauthentication failed" ask the user to complete `gcloud auth login
+  alex.lisavets@q3dsensing.com` again. The HTTP API on port 8080 keeps working without
+  gcloud, so job status/progress/model/preview need no login - only ssh/scp do.
 
 ## Gotcha: Git-Bash / MSYS path mangling in `--command=`
 
@@ -112,6 +129,11 @@ not have them. Notes:
 - Build with `source /home/anoma/.cargo/env && cargo build --release --bin
   brush_app` (~3.5 min); `GS_BRUSH_EXE` already points at
   `target/release/brush_app`, so no redeploy step after a build.
+- A copy of that commit is in this repository: `patches/brush_gs-server-patches.patch`
+  (+ `.bundle`), verified to apply cleanly to upstream `3edecbb` (= v0.3.0). Restore/refresh
+  instructions are in `patches/README.md`. The local `brush/` checkout is on a different
+  upstream commit (`83b7c71f`) with 37 lines of unrelated old edits - do not apply the
+  patch there, use a fresh clone.
 
 ## Major subsystems added this session
 
@@ -235,6 +257,41 @@ not have them. Notes:
   to survive the filters - believed photometric (blended edge pixel) rather
   than geometric. Unverified against real photos (see the first bullet).
 
+## Lessons from the CameraSet session (Oct 2026)
+
+Full write-up with numbers: `CameraSet_Training_Report_2026-10-19.md`. What matters operationally:
+
+- **Data**: `data/CameraSet` has 2 usable walking videos; the 6 `.ply` (point clouds only) and 6
+  `.dp` (proprietary Dot3D) files cannot train GS. Never feed a foreign `.ply` to
+  `hybrid_colmap_pointcloud` - the server copies it without aligning it to COLMAP's frame.
+- **COLMAP speed is set by features x images.** At the default 32k SIFT features the mapper crawled
+  at ~13 images/hour on 1145 frames. `max_image_size: 1280` (~12k features) + every 8th frame +
+  `sequential` matcher with `sequential_overlap 20` and `sequential_loop_detection` finished a
+  716-frame job in 2 h. The undistorter does not downscale, so Brush still trains at full resolution.
+- The server trains on the **largest COLMAP sub-model** only (often 30-75 % of the uploaded frames).
+  Check `tools/server_diag/inspect_job.sh <job>`. Do not judge a mapper run by its first tiny
+  sub-models - a run that logged 13/4/23/11/30-image models still ended with 231.
+- Two videos of the same place do link into one COLMAP model (exhaustive matching, 572 frames).
+- A `pointcloud_only` job on a COLMAP-format dataset has no `transforms.json`, so
+  `POST /jobs/{id}/preview` fails; `tools/sky_mask/colmap_to_transforms.py` creates it.
+- A transient `SQLite error: database disk image is malformed` during matching was fixed by
+  `POST /jobs/{id}/restart` (disk and DB were fine).
+- Classical sky masks (`tools/sky_mask/`) gave no measurable improvement; the black sky/far field is
+  the renderer's empty background, not something masks fix.
+- **Server clean-up policy**: deleting a job is irreversible and the user decides per job. 27 jobs
+  (102 GB) referenced by the Batch12/Core_Artifact reports and by `config.py` (`210ca694`) were
+  deliberately kept - list in the report (section 4.1). The largest free space is the intermediate
+  `model_<step>.ply` exports (~257 GB) which need a shell on the VM to remove.
+
+## Resuming on another computer
+
+Start with `CONTINUE_ON_ANOTHER_COMPUTER.md` (Russian, for the owner): what is in git and what is not
+(`data/`, `brush/`, `.venv`, COLMAP binaries are not), setup steps, gcloud access, the Brush patch,
+state at hand-over. Documentation map: `COMPLETE_USER_GUIDE_EN.html/.md` (app + server, one
+self-contained file; rebuild with `python tools/docs/build_guide_html.py`), `SERVER_USER_MANUAL*.md`
+(server only, RU + EN), `CLIENT_TRAINING_MODES_DEVELOPER_GUIDE.md`, the reports in the repo root.
+Client/ops scripts: `tools/README.md`.
+
 ## Cleanup convention
 
 `scratchpad/` (gitignored) is scratch space for one-off debug scripts, test
@@ -244,4 +301,6 @@ load-bearing). Loose one-off log/tracking files at the repo root
 (`*_log.txt`, `*_created.txt`, `*_tracking.txt`) from past manual batch
 operations were removed in the same commit as this file - don't recreate
 that pattern; if a batch script needs a durable record, put it in a report
-markdown file instead of a loose tracked `.txt`.
+markdown file instead of a loose tracked `.txt`. A script that is reusable
+(parameterised, no hard-coded paths) belongs in `tools/` with a line in
+`tools/README.md`; a one-off stays in `scratchpad/`.
