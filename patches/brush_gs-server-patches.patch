@@ -1,0 +1,1257 @@
+From b0900e6b3da61efeb79204a6c8c97be8f01d84a2 Mon Sep 17 00:00:00 2001
+From: anomalisfree <anomalisfree@gmail.com>
+Date: Fri, 9 Oct 2026 15:13:31 +0000
+Subject: [PATCH] GS server patches: depth channel, depth loss, position
+ anchor, aniso reg, photo-consistency tracking
+
+Local changes made for the gs_server training pipeline, on top of upstream 3edecbb.
+All new behavior is opt-in and off by default; with every new flag at its default, training
+and the exported PLY are unchanged.
+
+- Depth: 5th render output channel (view-space depth) in brush-render (forward + backward
+  WGSL/Rust), per-view depth maps loaded from a sibling depth/ directory by brush-dataset,
+  and --depth-loss-weight / --depth-max-range (readings beyond the cap are treated as
+  missing; uncapped far LiDAR depth corrupted distant surfaces).
+- Position anchor: --position-anchor-weight / --position-anchor-max-dist pull a splat toward
+  the point-cloud position it (or its split ancestor) came from. Carried through prune and
+  split/clone like the other per-splat tensors.
+- Anisotropy regularization: --aniso-reg-weight / --aniso-reg-ratio-threshold penalize
+  max/min scale ratio beyond a threshold.
+- Photo-consistency tracking: --photo-consistency-enabled / --photo-consistency-warmup-steps
+  accumulate per-splat render-vs-photo residual at the splat's projected pixel (read-only
+  bookkeeping, never enters the loss) and export it as optional PLY properties
+  photo_resid_avg / photo_resid_count. splat_to_ply gained an optional second argument.
+- The penalty terms above are normalized by the count of violating splats, not all visible
+  splats: a plain .sum() over ~1.7M splats either explodes (NaN) or is diluted to nothing.
+- pred_rgb/gt_rgb are cloned in the lpips branch so later code can still use them.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ crates/brush-dataset/src/formats/colmap.rs    |  13 +-
+ crates/brush-dataset/src/formats/mod.rs       |  17 ++
+ .../brush-dataset/src/formats/nerfstudio.rs   |  13 +-
+ crates/brush-dataset/src/scene.rs             |  41 +++
+ crates/brush-dataset/src/scene_loader.rs      |  21 +-
+ crates/brush-process/src/train_stream.rs      |  14 +-
+ crates/brush-render-bwd/src/render_bwd.rs     |   8 +-
+ .../src/shaders/project_backwards.wgsl        |  13 +-
+ .../src/shaders/rasterize_backwards.wgsl      |  34 ++-
+ crates/brush-render/src/burn_glue.rs          |   4 +-
+ crates/brush-render/src/render.rs             |   3 +-
+ crates/brush-render/src/shaders/helpers.wgsl  |   7 +-
+ .../src/shaders/project_visible.wgsl          |   3 +-
+ .../brush-render/src/shaders/rasterize.wgsl   |  16 +-
+ crates/brush-serde/src/export.rs              |  49 +++-
+ crates/brush-serde/src/import.rs              |   6 +-
+ crates/brush-train/src/config.rs              |  79 +++++
+ crates/brush-train/src/train.rs               | 269 +++++++++++++++++-
+ crates/brush-ui/src/scene.rs                  |   2 +-
+ 19 files changed, 565 insertions(+), 47 deletions(-)
+
+diff --git a/crates/brush-dataset/src/formats/colmap.rs b/crates/brush-dataset/src/formats/colmap.rs
+index d9fe9fc..e59d4da 100644
+--- a/crates/brush-dataset/src/formats/colmap.rs
++++ b/crates/brush-dataset/src/formats/colmap.rs
+@@ -4,7 +4,7 @@ use super::FormatError;
+ use crate::{
+     Dataset,
+     config::LoadDataseConfig,
+-    formats::find_mask_path,
++    formats::{find_depth_path, find_mask_path},
+     scene::{LoadImage, SceneView},
+ };
+ use brush_render::{
+@@ -139,8 +139,15 @@ async fn load_dataset_inner(
+ 
+         log::info!("Loaded COLMAP image at path {path:?}");
+ 
+-        let load_img =
+-            LoadImage::new(vfs.clone(), &path, mask_path, load_args.max_resolution).await?;
++        let depth_path = find_depth_path(&vfs, &path);
++        let load_img = LoadImage::new(
++            vfs.clone(),
++            &path,
++            mask_path,
++            depth_path,
++            load_args.max_resolution,
++        )
++        .await?;
+ 
+         let view = SceneView {
+             camera,
+diff --git a/crates/brush-dataset/src/formats/mod.rs b/crates/brush-dataset/src/formats/mod.rs
+index 5b82190..050946e 100644
+--- a/crates/brush-dataset/src/formats/mod.rs
++++ b/crates/brush-dataset/src/formats/mod.rs
+@@ -102,3 +102,20 @@ fn find_mask_path(vfs: &BrushVfs, path: &Path) -> Option<PathBuf> {
+     }
+     None
+ }
++
++/// Same convention as [`find_mask_path`], but looks in a sibling `depth/` directory
++/// instead of `masks/`. Used for optional depth supervision (see `--depth-loss-weight`).
++pub(crate) fn find_depth_path(vfs: &BrushVfs, path: &Path) -> Option<PathBuf> {
++    let parent = path.parent()?.clean();
++    let file_stem = path.file_stem()?.to_str()?;
++    let depth_dir = parent.parent()?.join("depth").clean();
++    for candidate in vfs.files_with_stem(file_stem) {
++        let Some(file_parent) = candidate.parent() else {
++            continue;
++        };
++        if file_parent == depth_dir {
++            return Some(candidate);
++        }
++    }
++    None
++}
+diff --git a/crates/brush-dataset/src/formats/nerfstudio.rs b/crates/brush-dataset/src/formats/nerfstudio.rs
+index d015d23..e78d9fa 100644
+--- a/crates/brush-dataset/src/formats/nerfstudio.rs
++++ b/crates/brush-dataset/src/formats/nerfstudio.rs
+@@ -1,4 +1,5 @@
+ use super::FormatError;
++use super::find_depth_path;
+ use super::find_mask_path;
+ use crate::{
+     Dataset,
+@@ -131,8 +132,16 @@ async fn read_transforms_file(
+             path = path.with_extension("png");
+         }
+         let mask_path = find_mask_path(&vfs, &path);
+-
+-        let image = LoadImage::new(vfs.clone(), &path, mask_path, load_args.max_resolution).await;
++        let depth_path = find_depth_path(&vfs, &path);
++
++        let image = LoadImage::new(
++            vfs.clone(),
++            &path,
++            mask_path,
++            depth_path,
++            load_args.max_resolution,
++        )
++        .await;
+ 
+         let image = match image {
+             Ok(image) => image,
+diff --git a/crates/brush-dataset/src/scene.rs b/crates/brush-dataset/src/scene.rs
+index e189cd8..ffb2d3e 100644
+--- a/crates/brush-dataset/src/scene.rs
++++ b/crates/brush-dataset/src/scene.rs
+@@ -26,6 +26,7 @@ pub struct LoadImage {
+     pub vfs: Arc<BrushVfs>,
+     pub path: PathBuf,
+     pub mask_path: Option<PathBuf>,
++    pub depth_path: Option<PathBuf>,
+     color: image::ColorType,
+     size: glam::UVec2,
+     max_resolution: u32,
+@@ -71,6 +72,7 @@ impl LoadImage {
+         vfs: Arc<BrushVfs>,
+         path: &Path,
+         mask_path: Option<PathBuf>,
++        depth_path: Option<PathBuf>,
+         max_resolution: u32,
+     ) -> std::io::Result<Self> {
+         let reader = &mut vfs.reader_at_path(path).await?;
+@@ -80,6 +82,7 @@ impl LoadImage {
+             vfs,
+             path: path.to_path_buf(),
+             mask_path,
++            depth_path,
+             max_resolution,
+             size: data.0,
+             color: data.1,
+@@ -161,6 +164,40 @@ impl LoadImage {
+         self.mask_path.is_some()
+     }
+ 
++    pub fn has_depth(&self) -> bool {
++        self.depth_path.is_some()
++    }
++
++    /// Loads and resizes the ground-truth depth map (if any) to exactly match
++    /// [`Self::dimensions`], so it lines up pixel-for-pixel with the training image and
++    /// the rendered depth channel. Values are in meters; a source pixel of 0 (the usual
++    /// "no data" sentinel for LiDAR/ARKit depth) stays 0 and should be treated as invalid
++    /// by the caller (see the depth loss in brush-train).
++    ///
++    /// Expects a 16-bit grayscale PNG with values in millimeters (matches the raw
++    /// LiDAR/ARKit depth convention used by the datasets this was built for). Nearest-
++    /// neighbor resizing is used deliberately, to avoid blending depth across real
++    /// discontinuities (object silhouettes) the way a smooth filter would.
++    pub async fn load_depth(&self) -> image::ImageResult<Option<Vec<f32>>> {
++        let Some(depth_path) = &self.depth_path else {
++            return Ok(None);
++        };
++        let mut depth_bytes = vec![];
++        self.vfs
++            .reader_at_path(depth_path)
++            .await?
++            .read_to_end(&mut depth_bytes)
++            .await?;
++        let depth_img = image::load_from_memory(&depth_bytes)?;
++        let target = self.dimensions();
++        let resized =
++            depth_img.resize_exact(target.x, target.y, image::imageops::FilterType::Nearest);
++        let depth_mm = resized.to_luma16();
++        Ok(Some(
++            depth_mm.into_raw().into_iter().map(|v| v as f32 / 1000.0).collect(),
++        ))
++    }
++
+     pub fn aspect_ratio(&self) -> f32 {
+         let dim = self.dimensions();
+         dim.x as f32 / dim.y as f32
+@@ -273,6 +310,10 @@ pub struct SceneBatch<B: Backend> {
+     pub img_tensor: Tensor<B, 3>,
+     pub alpha_is_mask: bool,
+     pub camera: Camera,
++    /// Ground-truth depth in meters, shape [H, W, 1], pixel-aligned with `img_tensor`.
++    /// A value of 0 means "no data" (see [`LoadImage::load_depth`]). `None` when this
++    /// view has no depth map at all.
++    pub depth_tensor: Option<Tensor<B, 3>>,
+ }
+ 
+ impl<B: Backend> SceneBatch<B> {
+diff --git a/crates/brush-dataset/src/scene_loader.rs b/crates/brush-dataset/src/scene_loader.rs
+index e87d02f..9b07569 100644
+--- a/crates/brush-dataset/src/scene_loader.rs
++++ b/crates/brush-dataset/src/scene_loader.rs
+@@ -1,6 +1,9 @@
+ use std::sync::Arc;
+ 
+-use burn::prelude::Backend;
++use burn::{
++    prelude::Backend,
++    tensor::{Tensor, TensorData},
++};
+ use image::DynamicImage;
+ use rand::{SeedableRng, seq::SliceRandom};
+ use tokio::sync::mpsc::Receiver;
+@@ -113,8 +116,14 @@ impl<B: Backend> SceneLoader<B> {
+                             sample
+                         };
+ 
++                        // Not cached (unlike the RGB image above) - depth maps are much
++                        // smaller and this only runs when depth supervision is enabled.
++                        let depth = view.image.load_depth().await.expect(
++                            "Scene loader encountered an error while loading a depth map",
++                        );
++
+                         let _ = send_img
+-                            .send((sample, view.image.is_masked(), view.camera.clone()))
++                            .send((sample, view.image.is_masked(), view.camera.clone(), depth))
+                             .await;
+                     };
+ 
+@@ -131,15 +140,21 @@ impl<B: Backend> SceneLoader<B> {
+         let device = device.clone();
+         tokio_wasm::spawn(async move {
+             while let Some(rec) = rec_imag.recv().await {
+-                let (sample, alpha_is_mask, camera) = rec;
++                let (sample, alpha_is_mask, camera, depth) = rec;
+ 
+                 let img_tensor = sample_to_tensor(&sample, &device);
++                let [h, w, _] = img_tensor.dims();
++
++                let depth_tensor = depth.map(|depth_m| {
++                    Tensor::from_data(TensorData::new(depth_m, [h, w, 1]), &device)
++                });
+ 
+                 if send_batch
+                     .send(SceneBatch {
+                         img_tensor,
+                         alpha_is_mask,
+                         camera,
++                        depth_tensor,
+                     })
+                     .await
+                     .is_err()
+diff --git a/crates/brush-process/src/train_stream.rs b/crates/brush-process/src/train_stream.rs
+index 3e94dce..efe4fe2 100644
+--- a/crates/brush-process/src/train_stream.rs
++++ b/crates/brush-process/src/train_stream.rs
+@@ -156,7 +156,15 @@ pub(crate) async fn train_stream(
+         }
+ 
+         if iter % process_config.export_every == 0 || is_last_step {
+-            let res = export_checkpoint(&process_args, process_config, splats.valid(), iter).await;
++            let photo_consistency = trainer.photo_consistency_stats().await;
++            let res = export_checkpoint(
++                &process_args,
++                process_config,
++                splats.valid(),
++                iter,
++                photo_consistency,
++            )
++            .await;
+             warner
+                 .warn_if_err(res.context(format!("Export at iteration {iter} failed")))
+                 .await;
+@@ -268,6 +276,7 @@ async fn export_checkpoint(
+     process_config: &ProcessConfig,
+     splats: Splats<MainBackend>,
+     iter: u32,
++    photo_consistency: Option<(Vec<f32>, Vec<f32>)>,
+ ) -> Result<(), anyhow::Error> {
+     // TODO: Want to support this on WASM somehow. Maybe have user pick a file once,
+     // and write to it repeatedly?
+@@ -283,7 +292,7 @@ async fn export_checkpoint(
+         fs::create_dir_all(&export_path)
+             .await
+             .context("Creating export directory")?;
+-        let splat_data = brush_serde::splat_to_ply(splats)
++        let splat_data = brush_serde::splat_to_ply(splats, photo_consistency)
+             .await
+             .context("Serializing splat data")?;
+         fs::write(export_path.join(&export_name), splat_data)
+@@ -295,6 +304,7 @@ async fn export_checkpoint(
+         let _ = process_args;
+         let _ = process_config;
+         let _ = splats;
++        let _ = photo_consistency;
+         let _ = iter;
+     }
+     Ok(())
+diff --git a/crates/brush-render-bwd/src/render_bwd.rs b/crates/brush-render-bwd/src/render_bwd.rs
+index e799d8b..1dd45bf 100644
+--- a/crates/brush-render-bwd/src/render_bwd.rs
++++ b/crates/brush-render-bwd/src/render_bwd.rs
+@@ -81,6 +81,10 @@ pub(crate) fn render_backward(
+     let v_grads = MainBackendBase::float_zeros([num_points, 8].into(), device, FloatDType::F32);
+     let v_refine_weight =
+         MainBackendBase::float_zeros([num_points].into(), device, FloatDType::F32);
++    // Direct depth-loss gradient per splat (zero when depth supervision is off - see
++    // rasterize_backwards.wgsl / project_backwards.wgsl). Purely internal to this
++    // function: its contribution is folded into v_means before we return.
++    let v_depths = MainBackendBase::float_zeros([num_points].into(), device, FloatDType::F32);
+ 
+     let tile_bounds = uvec2(
+         img_size
+@@ -118,6 +122,7 @@ pub(crate) fn render_backward(
+                     v_grads.handle.clone().binding(),
+                     v_raw_opac.handle.clone().binding(),
+                     v_refine_weight.handle.clone().binding(),
++                    v_depths.handle.clone().binding(),
+                 ]),
+             );
+         }
+@@ -140,7 +145,8 @@ pub(crate) fn render_backward(
+                 v_means.handle.clone().binding(),
+                 v_scales.handle.clone().binding(),
+                 v_quats.handle.clone().binding(),
+-                v_coeffs.handle.clone().binding()
++                v_coeffs.handle.clone().binding(),
++                v_depths.handle.clone().binding(),
+             ]),
+         );
+     });
+diff --git a/crates/brush-render-bwd/src/shaders/project_backwards.wgsl b/crates/brush-render-bwd/src/shaders/project_backwards.wgsl
+index 311b24c..4d640a4 100644
+--- a/crates/brush-render-bwd/src/shaders/project_backwards.wgsl
++++ b/crates/brush-render-bwd/src/shaders/project_backwards.wgsl
+@@ -10,6 +10,9 @@
+ @group(0) @binding(4) var<storage, read> global_from_compact_gid: array<u32>;
+ 
+ @group(0) @binding(5) var<storage, read> v_grads: array<vec4f>;
++// Per-global-gid direct depth-loss gradient, accumulated in rasterize_backwards.wgsl.
++// Zero for every splat when depth supervision is disabled (buffer is just zero-filled).
++@group(0) @binding(10) var<storage, read> v_depths: array<f32>;
+ 
+ @group(0) @binding(6) var<storage, read_write> v_means: array<helpers::PackedVec3>;
+ @group(0) @binding(7) var<storage, read_write> v_scales: array<helpers::PackedVec3>;
+@@ -228,6 +231,7 @@ fn persp_proj_vjp(
+     // grad outputs
+     v_cov2d: mat2x2f,
+     v_mean2d: vec2f,
++    v_depth: f32,
+ ) -> vec3f {
+     let x = mean3d.x;
+     let y = mean3d.y;
+@@ -281,9 +285,9 @@ fn persp_proj_vjp(
+                   2.f * focal.x * tx * rz3 * v_J[2][0] +
+                   2.f * focal.y * ty * rz3 * v_J[2][1];
+ 
+-    // add contribution from v_depths
+-    // Disabled as there is no depth supervision currently.
+-    // v_mean3d.z += v_depths[0];
++    // Direct depth-loss gradient (see helpers::ProjectedSplat.depth / rasterize.wgsl):
++    // depth = mean_c.z, so d(depth)/d(mean_c.z) = 1, added straight onto the z component.
++    v_mean3d.z += v_depth;
+ 
+     return v_mean3d;
+ }
+@@ -380,7 +384,8 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
+ 
+     // persp_proj_vjp
+     let J = helpers::calc_cam_J(mean_c, focal, img_size, pixel_center);
+-    let v_mean_c = persp_proj_vjp(J, mean_c, covar_c, focal, pixel_center, img_size, v_covar2d, v_mean2d);
++    let v_depth = v_depths[global_gid];
++    let v_mean_c = persp_proj_vjp(J, mean_c, covar_c, focal, pixel_center, img_size, v_covar2d, v_mean2d, v_depth);
+     // cov = J * V * Jt; G = df/dcov = v_cov
+     // -> df/dV = Jt * G * J
+     // -> df/dJ = G * J * Vt + Gt * J * V
+diff --git a/crates/brush-render-bwd/src/shaders/rasterize_backwards.wgsl b/crates/brush-render-bwd/src/shaders/rasterize_backwards.wgsl
+index 1ed9ca9..b6908ab 100644
+--- a/crates/brush-render-bwd/src/shaders/rasterize_backwards.wgsl
++++ b/crates/brush-render-bwd/src/shaders/rasterize_backwards.wgsl
+@@ -5,13 +5,15 @@
+ @group(0) @binding(2) var<storage, read> global_from_compact_gid: array<u32>;
+ @group(0) @binding(3) var<storage, read> tile_offsets: array<u32>;
+ @group(0) @binding(4) var<storage, read> projected: array<helpers::ProjectedSplat>;
+-@group(0) @binding(5) var<storage, read> output: array<vec4f>;
+-@group(0) @binding(6) var<storage, read> v_output: array<vec4f>;
++// Packed as 5 floats/pixel: RGBA + depth (see rasterize.wgsl's BWD_INFO output).
++@group(0) @binding(5) var<storage, read> output: array<f32>;
++@group(0) @binding(6) var<storage, read> v_output: array<f32>;
+ 
+ #ifdef HARD_FLOAT
+     @group(0) @binding(7) var<storage, read_write> v_splats: array<atomic<f32>>;
+     @group(0) @binding(8) var<storage, read_write> v_opacs: array<atomic<f32>>;
+     @group(0) @binding(9) var<storage, read_write> v_refines: array<atomic<f32>>;
++    @group(0) @binding(10) var<storage, read_write> v_depths: array<atomic<f32>>;
+ 
+     fn write_grads_atomic(id: u32, grads: f32) {
+         atomicAdd(&v_splats[id], grads);
+@@ -22,10 +24,14 @@
+     fn write_opac_atomic(id: u32, grads: f32) {
+         atomicAdd(&v_opacs[id], grads);
+     }
++    fn write_depth_atomic(id: u32, grads: f32) {
++        atomicAdd(&v_depths[id], grads);
++    }
+ #else
+     @group(0) @binding(7) var<storage, read_write> v_splats: array<atomic<u32>>;
+     @group(0) @binding(8) var<storage, read_write> v_opacs: array<atomic<u32>>;
+     @group(0) @binding(9) var<storage, read_write> v_refines: array<atomic<u32>>;
++    @group(0) @binding(10) var<storage, read_write> v_depths: array<atomic<u32>>;
+ 
+     fn add_bitcast(cur: u32, add: f32) -> u32 {
+         return bitcast<u32>(bitcast<f32>(cur) + add);
+@@ -51,6 +57,13 @@
+             if cas.exchanged { break; } else { old_value = cas.old_value; }
+         }
+     }
++    fn write_depth_atomic(id: u32, grads: f32) {
++        var old_value = atomicLoad(&v_depths[id]);
++        loop {
++            let cas = atomicCompareExchangeWeak(&v_depths[id], old_value, add_bitcast(old_value, grads));
++            if cas.exchanged { break; } else { old_value = cas.old_value; }
++        }
++    }
+ #endif
+ 
+ const THREAD_COUNT: u32 = 64u;
+@@ -73,6 +86,7 @@ fn main(
+     var pix_locs = array<vec2u, PIXELS_PER_THREAD>();
+     var pix_ids = array<u32, PIXELS_PER_THREAD>();
+     var v_outs = array<vec4f, PIXELS_PER_THREAD>();
++    var v_out_depths = array<f32, PIXELS_PER_THREAD>();
+     var pix_outs = array<vec4f, PIXELS_PER_THREAD>();
+     var dones = array<bool, PIXELS_PER_THREAD>();
+     var rgb_pixel_finals = array<vec3f, PIXELS_PER_THREAD>();
+@@ -85,8 +99,10 @@ fn main(
+         pix_ids[i] = pix_id;
+ 
+         if pix_locs[i].x < uniforms.img_size.x && pix_locs[i].y < uniforms.img_size.y {
+-            let final_color = output[pix_id];
+-            let v_out = v_output[pix_id];
++            let out_base = pix_id * 5u;
++            let final_color = vec4f(output[out_base + 0u], output[out_base + 1u], output[out_base + 2u], output[out_base + 3u]);
++            let v_out = vec4f(v_output[out_base + 0u], v_output[out_base + 1u], v_output[out_base + 2u], v_output[out_base + 3u]);
++            v_out_depths[i] = v_output[out_base + 4u];
+             let T_final = 1.0f - final_color.a;
+             rgb_pixel_finals[i] = final_color.rgb - T_final * uniforms.background.rgb;
+             v_outs[i] = vec4f(v_out.rgb, (v_out.a - dot(uniforms.background.rgb, v_out.rgb)) * T_final);
+@@ -130,6 +146,7 @@ fn main(
+             var v_xy_thread = vec2f(0.0f);
+             var v_conic_thread = vec3f(0.0f);
+             var v_rgb_thread = vec3f(0.0f);
++            var v_depth_thread = 0.0f;
+             var v_alpha_thread = 0.0f;
+             var v_refine_thread = 0.0f;
+             var hasGrad = false;
+@@ -167,6 +184,13 @@ fn main(
+                 let v_rgb_local = select(vec3f(0.0f), vis * v_outs[i].rgb, color.rgb >= vec3f(0.0f));
+                 v_rgb_thread += v_rgb_local;
+ 
++                // Direct depth-loss gradient: mirrors v_rgb_local above, using the same
++                // blend weight `vis`. Deliberately does NOT also flow into v_alpha (i.e.
++                // shape/opacity are not asked to change to match depth) - see
++                // helpers::ProjectedSplat.depth and project_backwards.wgsl for why this
++                // simpler, additive-only gradient was chosen over a full one.
++                v_depth_thread += vis * v_out_depths[i];
++
+                 // add contribution of this gaussian to the pixel
+                 pix_outs[i] = vec4f(pix_outs[i].rgb + vis * clamped_rgb, pix_outs[i].a);
+ 
+@@ -212,6 +236,7 @@ fn main(
+                 let sum_xy = subgroupAdd(v_xy_thread);
+                 let sum_conic = subgroupAdd(v_conic_thread);
+                 let sum_rgb = subgroupAdd(v_rgb_thread);
++                let sum_depth = subgroupAdd(v_depth_thread);
+                 let sum_alpha = subgroupAdd(v_alpha_thread);
+                 let sum_refine = subgroupAdd(v_refine_thread);
+ 
+@@ -228,6 +253,7 @@ fn main(
+                     write_grads_atomic(global_gid * 8 + 7, sum_rgb.z);
+                     write_opac_atomic(global_gid, sum_alpha);
+                     write_refine_atomic(global_gid, sum_refine);
++                    write_depth_atomic(global_gid, sum_depth);
+                 }
+             }
+         }
+diff --git a/crates/brush-render/src/burn_glue.rs b/crates/brush-render/src/burn_glue.rs
+index 6888888..0cef639 100644
+--- a/crates/brush-render/src/burn_glue.rs
++++ b/crates/brush-render/src/burn_glue.rs
+@@ -123,8 +123,8 @@ impl SplatForward<Self> for Fusion<MainBackendBase> {
+         let max_intersects = max_intersections(img_size, num_points as u32);
+ 
+         // If render_u32_buffer is true, we render a packed buffer of u32 values, otherwise
+-        // render RGBA f32 values.
+-        let channels = if bwd_info { 4 } else { 1 };
++        // render RGBA + depth f32 values (see helpers::ProjectedSplat.depth).
++        let channels = if bwd_info { 5 } else { 1 };
+ 
+         let out_img = client.tensor_uninitialized(
+             vec![img_size.y as usize, img_size.x as usize, channels],
+diff --git a/crates/brush-render/src/render.rs b/crates/brush-render/src/render.rs
+index 1e215e8..6628e36 100644
+--- a/crates/brush-render/src/render.rs
++++ b/crates/brush-render/src/render.rs
+@@ -325,7 +325,8 @@ pub(crate) fn render_forward(
+     let _span = tracing::trace_span!("Rasterize").entered();
+ 
+     let out_dim = if bwd_info {
+-        4
++        // RGBA + view-space depth (see helpers::ProjectedSplat.depth).
++        5
+     } else {
+         // Channels are packed into 4 bytes, aka one float.
+         1
+diff --git a/crates/brush-render/src/shaders/helpers.wgsl b/crates/brush-render/src/shaders/helpers.wgsl
+index 8fa301a..47242a6 100644
+--- a/crates/brush-render/src/shaders/helpers.wgsl
++++ b/crates/brush-render/src/shaders/helpers.wgsl
+@@ -74,10 +74,13 @@ struct ProjectedSplat {
+     color_g: f32,
+     color_b: f32,
+     color_a: f32,
++    // View-space depth (mean_c.z) of this splat, for optional depth supervision.
++    // See rasterize.wgsl (BWD_INFO branch) / project_backwards.wgsl (v_depths).
++    depth: f32,
+ }
+ 
+-fn create_projected_splat(xy: vec2f, conic: vec3f, color: vec4f) -> ProjectedSplat {
+-    return ProjectedSplat(xy.x, xy.y, conic.x, conic.y, conic.z, color.r, color.g, color.b, color.a);
++fn create_projected_splat(xy: vec2f, conic: vec3f, color: vec4f, depth: f32) -> ProjectedSplat {
++    return ProjectedSplat(xy.x, xy.y, conic.x, conic.y, conic.z, color.r, color.g, color.b, color.a, depth);
+ }
+ 
+ struct PackedVec3 {
+diff --git a/crates/brush-render/src/shaders/project_visible.wgsl b/crates/brush-render/src/shaders/project_visible.wgsl
+index 0be9926..d3d391d 100644
+--- a/crates/brush-render/src/shaders/project_visible.wgsl
++++ b/crates/brush-render/src/shaders/project_visible.wgsl
+@@ -245,6 +245,7 @@ fn main(@builtin(global_invocation_id) gid: vec3u) {
+     projected[compact_gid] = helpers::create_projected_splat(
+         mean2d,
+         vec3f(conic[0][0], conic[0][1], conic[1][1]),
+-        vec4f(color, opac)
++        vec4f(color, opac),
++        mean_c.z
+     );
+ }
+diff --git a/crates/brush-render/src/shaders/rasterize.wgsl b/crates/brush-render/src/shaders/rasterize.wgsl
+index 7b3abd4..ac7fd12 100644
+--- a/crates/brush-render/src/shaders/rasterize.wgsl
++++ b/crates/brush-render/src/shaders/rasterize.wgsl
+@@ -6,7 +6,8 @@
+ @group(0) @binding(3) var<storage, read> projected: array<helpers::ProjectedSplat>;
+ 
+ #ifdef BWD_INFO
+-    @group(0) @binding(4) var<storage, read_write> out_img: array<vec4f>;
++    // Packed as 5 floats/pixel: RGBA + view-space depth (see helpers::ProjectedSplat.depth).
++    @group(0) @binding(4) var<storage, read_write> out_img: array<f32>;
+     @group(0) @binding(5) var<storage, read> global_from_compact_gid: array<u32>;
+     @group(0) @binding(6) var<storage, read_write> visible: array<f32>;
+ #else
+@@ -51,6 +52,9 @@ fn main(
+     // current visibility left to render
+     var T = 1.0;
+     var pix_out = vec3f(0.0);
++    #ifdef BWD_INFO
++        var pix_depth = 0.0f;
++    #endif
+     var done = !inside;
+ 
+     // each thread loads one gaussian at a time before rasterizing its
+@@ -96,6 +100,9 @@ fn main(
+ 
+                 let vis = alpha * T;
+                 pix_out += max(color.rgb, vec3f(0.0)) * vis;
++                #ifdef BWD_INFO
++                    pix_depth += vis * proj.depth;
++                #endif
+                 T = next_T;
+             }
+         }
+@@ -107,7 +114,12 @@ fn main(
+         let final_color = vec4f(pix_out + T * uniforms.background.rgb, 1.0 - T);
+ 
+         #ifdef BWD_INFO
+-            out_img[pix_id] = final_color;
++            let base = pix_id * 5u;
++            out_img[base + 0u] = final_color.r;
++            out_img[base + 1u] = final_color.g;
++            out_img[base + 2u] = final_color.b;
++            out_img[base + 3u] = final_color.a;
++            out_img[base + 4u] = pix_depth;
+         #else
+             let colors_u = vec4u(clamp(final_color * 255.0, vec4f(0.0), vec4f(255.0)));
+             let packed: u32 = colors_u.x | (colors_u.y << 8u) | (colors_u.z << 16u) | (colors_u.w << 24u);
+diff --git a/crates/brush-serde/src/export.rs b/crates/brush-serde/src/export.rs
+index 885a2c5..222071d 100644
+--- a/crates/brush-serde/src/export.rs
++++ b/crates/brush-serde/src/export.rs
+@@ -26,6 +26,16 @@ struct DynamicPlyGaussian {
+     f_dc_1: f32,
+     f_dc_2: f32,
+     rest_coeffs: Vec<f32>,
++    // Optional photo-consistency stats (see brush-train's config.rs
++    // photo_consistency_enabled) - only serialized when
++    // include_photo_consistency is true, decided once per export call from
++    // whether the trainer tracked this at all. When false (the default, and
++    // the only possibility for any export that didn't opt in), these two
++    // fields are never added to the output and the PLY is byte-identical to
++    // before this feature existed.
++    photo_resid_avg: f32,
++    photo_resid_count: f32,
++    include_photo_consistency: bool,
+ }
+ 
+ impl Serialize for DynamicPlyGaussian {
+@@ -105,6 +115,12 @@ impl Serialize for DynamicPlyGaussian {
+         for (name, val) in sh_names.iter().zip(&self.rest_coeffs) {
+             map.insert(name, *val);
+         }
++
++        if self.include_photo_consistency {
++            map.insert("photo_resid_avg", self.photo_resid_avg);
++            map.insert("photo_resid_count", self.photo_resid_count);
++        }
++
+         // Serialize as a map
+         map.serialize(serializer)
+     }
+@@ -116,7 +132,10 @@ struct DynamicPly {
+ }
+ pub use burn_cubecl::{CubeRuntime, cubecl::Compiler, tensor::CubeTensor};
+ 
+-async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
++async fn read_splat_data<B: Backend>(
++    splats: Splats<B>,
++    photo_consistency: Option<&(Vec<f32>, Vec<f32>)>,
++) -> DynamicPly {
+     let means = splats
+         .means
+         .val()
+@@ -203,6 +222,16 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
+ 
+             let rest_coeffs = [sh_red_rest, sh_green_rest, sh_blue_rest].concat();
+ 
++            let (photo_resid_avg, photo_resid_count, include_photo_consistency) =
++                match photo_consistency {
++                    Some((sum, count)) => {
++                        let c = count[i];
++                        let avg = if c > 0.0 { sum[i] / c } else { 0.0 };
++                        (avg, c, true)
++                    }
++                    None => (0.0, 0.0, false),
++                };
++
+             DynamicPlyGaussian {
+                 x: means[i * 3],
+                 y: means[i * 3 + 1],
+@@ -219,16 +248,22 @@ async fn read_splat_data<B: Backend>(splats: Splats<B>) -> DynamicPly {
+                 f_dc_1: sh_green[0],
+                 f_dc_2: sh_blue[0],
+                 rest_coeffs,
++                photo_resid_avg,
++                photo_resid_count,
++                include_photo_consistency,
+             }
+         })
+         .collect();
+     DynamicPly { vertex: vertices }
+ }
+ 
+-pub async fn splat_to_ply<B: Backend>(splats: Splats<B>) -> Result<Vec<u8>, SerializeError> {
++pub async fn splat_to_ply<B: Backend>(
++    splats: Splats<B>,
++    photo_consistency: Option<(Vec<f32>, Vec<f32>)>,
++) -> Result<Vec<u8>, SerializeError> {
+     let splats = splats.with_normed_rotations();
+     let sh_degree = splats.sh_degree();
+-    let ply = read_splat_data(splats.clone()).await;
++    let ply = read_splat_data(splats.clone(), photo_consistency.as_ref()).await;
+ 
+     let comments = vec![
+         "Exported from Brush".to_owned(),
+@@ -278,7 +313,7 @@ mod tests {
+             let splats = create_test_splats(degree);
+             assert_eq!(splats.sh_degree(), degree);
+ 
+-            let ply_data = read_splat_data(splats.clone()).await;
++            let ply_data = read_splat_data(splats.clone(), None).await;
+             let expected_rest_coeffs = if degree == 0 {
+                 0
+             } else {
+@@ -289,7 +324,7 @@ mod tests {
+                 ply_data.vertex[0].rest_coeffs.len(),
+                 expected_rest_coeffs as usize
+             );
+-            assert!(splat_to_ply(splats).await.is_ok());
++            assert!(splat_to_ply(splats, None).await.is_ok());
+         }
+     }
+ 
+@@ -299,7 +334,7 @@ mod tests {
+ 
+         for (degree, expected_rest_fields) in test_cases {
+             let splats = create_test_splats(degree);
+-            let ply_bytes = splat_to_ply(splats).await.unwrap();
++            let ply_bytes = splat_to_ply(splats, None).await.unwrap();
+             let ply_string = String::from_utf8_lossy(&ply_bytes);
+ 
+             let actual_rest_fields = ply_string.matches("property float f_rest_").count();
+@@ -324,7 +359,7 @@ mod tests {
+ 
+         for degree in [0, 1, 2] {
+             let original_splats = create_test_splats(degree);
+-            let ply_bytes = splat_to_ply(original_splats.clone())
++            let ply_bytes = splat_to_ply(original_splats.clone(), None)
+                 .await
+                 .expect("Failed to serialize splats");
+ 
+diff --git a/crates/brush-serde/src/import.rs b/crates/brush-serde/src/import.rs
+index 9955c94..2d02250 100644
+--- a/crates/brush-serde/src/import.rs
++++ b/crates/brush-serde/src/import.rs
+@@ -680,7 +680,7 @@ mod tests {
+         let device = WgpuDevice::default();
+ 
+         let original_splats = create_test_splats(1);
+-        let ply_bytes = splat_to_ply(original_splats.clone()).await.unwrap();
++        let ply_bytes = splat_to_ply(original_splats.clone(), None).await.unwrap();
+ 
+         let cursor = Cursor::new(ply_bytes);
+         let imported_message = load_splat_from_ply(cursor, None, device).await.unwrap();
+@@ -696,7 +696,7 @@ mod tests {
+ 
+         for degree in [0, 1, 2] {
+             let original_splats = create_test_splats(degree);
+-            let ply_bytes = splat_to_ply(original_splats).await.unwrap();
++            let ply_bytes = splat_to_ply(original_splats, None).await.unwrap();
+ 
+             let cursor = Cursor::new(ply_bytes);
+             let imported_message = load_splat_from_ply(cursor, None, device.clone())
+@@ -715,7 +715,7 @@ mod tests {
+         let original_splats = create_test_splats_with_count(0, 4);
+         assert_eq!(original_splats.num_splats(), 4);
+ 
+-        let ply_bytes = splat_to_ply(original_splats).await.unwrap();
++        let ply_bytes = splat_to_ply(original_splats, None).await.unwrap();
+ 
+         // Test no subsampling
+         let cursor = Cursor::new(ply_bytes.clone());
+diff --git a/crates/brush-train/src/config.rs b/crates/brush-train/src/config.rs
+index 68df1f0..9f175aa 100644
+--- a/crates/brush-train/src/config.rs
++++ b/crates/brush-train/src/config.rs
+@@ -77,6 +77,20 @@ pub struct TrainConfig {
+     #[arg(long, help_heading = "Training options", default_value = "1e-8")]
+     pub scale_loss_weight: f32,
+ 
++    /// Weight of the anisotropy regularization loss. Unlike scale_loss_weight (which
++    /// penalizes a splat's overall scale magnitude and never changes how elongated it is
++    /// relative to itself), this penalizes the max/min scale-axis ratio directly. 0
++    /// disables it (default - opt-in, since this changes training dynamics for every mode).
++    #[arg(long, help_heading = "Training options", default_value = "0.0")]
++    pub aniso_reg_weight: f32,
++
++    /// Max/min scale-axis ratio below which aniso_reg_weight applies no penalty - ordinary
++    /// anisotropic splats (e.g. flat walls/floors) are legitimate and common (ratios of
++    /// 10-50x are normal), so only ratios beyond this are penalized. Only relevant when
++    /// aniso_reg_weight > 0.
++    #[arg(long, help_heading = "Training options", default_value = "50.0")]
++    pub aniso_reg_ratio_threshold: f32,
++
+     /// How long to apply aux losses and augementations for (1 being the full training duration).
+     #[arg(long, help_heading = "Training options", default_value = "0.9")]
+     pub aux_loss_time: f32,
+@@ -87,6 +101,71 @@ pub struct TrainConfig {
+ 
+     #[arg(long, help_heading = "Refine options", default_value = "0.0")]
+     pub lpips_loss_weight: f32,
++
++    /// Weight of the depth-supervision loss, comparing the rendered depth channel
++    /// against a ground-truth depth map (see brush-dataset's sibling `depth/` directory
++    /// convention - same pattern as `masks/`). 0 disables it (default - opt-in, only
++    /// meaningful for datasets that actually provide per-view depth maps, e.g. from
++    /// LiDAR/ARKit). Weighted per-pixel by the rendered accumulated alpha, and only
++    /// applied where the ground-truth depth is valid (> 0 and <= depth_max_range).
++    #[arg(long, help_heading = "Training options", default_value = "0.0")]
++    pub depth_loss_weight: f32,
++
++    /// Maximum reliable depth range (meters) for depth-supervision ground truth.
++    /// Consumer LiDAR/ARKit depth sensors become unreliable - or return a plausible-
++    /// looking but wrong value instead of failing outright - beyond a few meters
++    /// indoors (Apple's own LiDAR scanner spec: ~5m effective range). A far surface
++    /// (e.g. a domed ceiling) can silently get bad "ground truth" that then actively
++    /// corrupts geometry there, rather than just providing no signal. Readings beyond
++    /// this are treated the same as the 0 "no data" sentinel. Only relevant when
++    /// depth_loss_weight > 0.
++    #[arg(long, help_heading = "Training options", default_value = "5.0")]
++    pub depth_max_range: f32,
++
++    /// Weight of the position-anchor loss: pulls each Gaussian's mean back toward
++    /// the point-cloud position it (or its splitting ancestor) was created at, once
++    /// it drifts beyond position_anchor_max_dist. Unlike depth_loss_weight this is a
++    /// direct 3D prior needing no camera rendering - the same point cloud already
++    /// used to seed the Gaussians, kept as a standing constraint instead of only a
++    /// one-time initialization. Meant to stop photometric optimization from
++    /// dragging splats into "needle"/floating-fragment configurations. Fades out
++    /// like the other aux losses (see aux_loss_time). 0 disables it (default -
++    /// opt-in, untested at scale yet).
++    #[arg(long, help_heading = "Training options", default_value = "0.0")]
++    pub position_anchor_weight: f32,
++
++    /// Distance (meters) a Gaussian's mean may drift from its anchor point before
++    /// position_anchor_weight starts penalizing it. Only relevant when
++    /// position_anchor_weight > 0.
++    #[arg(long, help_heading = "Training options", default_value = "0.2")]
++    pub position_anchor_max_dist: f32,
++
++    /// Enables tracking a per-splat "photometric consistency" statistic during
++    /// training: the rendering residual |rendered - ground_truth|, sampled at
++    /// each visible splat's own projected screen position, averaged across
++    /// every training step/view it appears in from photo_consistency_warmup_steps
++    /// onward. A splat whose color/shape has genuinely converged keeps a low
++    /// residual here; a multi-view-inconsistent "floater" splat (asked to
++    /// explain conflicting colors from different viewing angles) never
++    /// converges, so this measures that directly rather than inferring it
++    /// from shape/position heuristics (which didn't separate this population -
++    /// see the AU_Las_Vegas floating-tile investigation report). Purely
++    /// additive/diagnostic: this statistic never enters the training loss and
++    /// cannot affect gradients or any existing training behavior. It is only
++    /// exported alongside the model (as extra photo_resid_avg/photo_resid_count
++    /// PLY properties, present only when this flag is set) for a separate
++    /// post-training filter to consume. 0/false (default) adds zero overhead
++    /// and produces byte-identical PLY output to before this option existed.
++    #[arg(long, help_heading = "Training options", default_value = "false")]
++    pub photo_consistency_enabled: bool,
++
++    /// Training step at which photo-consistency accumulation starts. Splats
++    /// are still moving/splitting heavily early in training (see
++    /// growth_stop_iter) - accumulating from step 0 would count normal
++    /// early-training churn as "inconsistency" and dilute the statistic for
++    /// splats created late. Only relevant when photo_consistency_enabled is set.
++    #[arg(long, help_heading = "Training options", default_value = "15000")]
++    pub photo_consistency_warmup_steps: u32,
+ }
+ 
+ impl Default for TrainConfig {
+diff --git a/crates/brush-train/src/train.rs b/crates/brush-train/src/train.rs
+index 47aa071..6a371e9 100644
+--- a/crates/brush-train/src/train.rs
++++ b/crates/brush-train/src/train.rs
+@@ -55,6 +55,23 @@ pub struct SplatTrainer {
+ 
+     bounds: BoundingBox,
+ 
++    // Per-splat reference position for position_anchor_weight (see config.rs):
++    // the point-cloud position a splat (or its splitting ancestor) was created
++    // at. Carried through prune/refine alongside the other splat attributes -
++    // see prune_points and refine_splats. None when the feature is disabled.
++    position_anchor: Option<Tensor<MainBackend, 2>>,
++
++    // Per-splat photo-consistency accumulators (see config.rs
++    // photo_consistency_enabled): running sum of |rendered - ground_truth|
++    // sampled at each splat's own projected screen position, and how many
++    // visible steps it's been sampled in from photo_consistency_warmup_steps
++    // onward. Purely additive bookkeeping - read only at export time, never
++    // enters `loss`, so it cannot affect gradients or training dynamics.
++    // Threaded through prune/refine exactly like position_anchor above.
++    // None when disabled (the default).
++    photo_resid_sum: Option<Tensor<MainBackend, 1>>,
++    photo_resid_count: Option<Tensor<MainBackend, 1>>,
++
+     #[cfg(not(target_family = "wasm"))]
+     lpips: Option<lpips::LpipsModel<DiffBackend>>,
+ }
+@@ -84,6 +101,28 @@ impl SplatTrainer {
+         const SSIM_WINDOW_SIZE: usize = 11; // Could be configurable but meh, rather keep consistent.
+         let ssim = (config.ssim_weight > 0.0).then(|| Ssim::new(SSIM_WINDOW_SIZE, 3, device));
+ 
++        // Snapshot the initial (point-cloud-seeded) means as the anchor reference,
++        // before get_bounds below consumes init_splats. Backend-agnostic on purpose
++        // (works whichever B::new is called with) - mirrors how `bounds` itself is
++        // computed generically via async data readback rather than assuming
++        // B == MainBackend.
++        let position_anchor = if config.position_anchor_weight > 0.0 {
++            let means_data = init_splats.means.val().into_data_async().await;
++            Some(Tensor::<MainBackend, 2>::from_data(means_data, device))
++        } else {
++            None
++        };
++
++        let (photo_resid_sum, photo_resid_count) = if config.photo_consistency_enabled {
++            let n = init_splats.num_splats() as usize;
++            (
++                Some(Tensor::<MainBackend, 1>::zeros([n], device)),
++                Some(Tensor::<MainBackend, 1>::zeros([n], device)),
++            )
++        } else {
++            (None, None)
++        };
++
+         let bounds = init_splats.get_bounds(BOUND_PERCENTILE).await;
+ 
+         Self {
+@@ -94,6 +133,9 @@ impl SplatTrainer {
+             refine_record: None,
+             ssim,
+             bounds,
++            position_anchor,
++            photo_resid_sum,
++            photo_resid_count,
+             #[cfg(not(target_family = "wasm"))]
+             lpips: (config.lpips_loss_weight > 0.0).then(|| lpips::load_vgg_lpips(device)),
+         }
+@@ -178,7 +220,7 @@ impl SplatTrainer {
+             // TODO: Support masked lpips.
+             #[cfg(not(target_family = "wasm"))]
+             let loss = if let Some(lpips) = &self.lpips {
+-                loss + lpips.lpips(pred_rgb.unsqueeze_dim(0), gt_rgb.unsqueeze_dim(0))
++                loss + lpips.lpips(pred_rgb.clone().unsqueeze_dim(0), gt_rgb.clone().unsqueeze_dim(0))
+                     * self.config.lpips_loss_weight
+             } else {
+                 loss
+@@ -196,16 +238,141 @@ impl SplatTrainer {
+             };
+ 
+             let scale_loss_weight = self.config.scale_loss_weight * aux_loss_weight / median_scale;
+-            if scale_loss_weight > 0.0 {
++            let loss = if scale_loss_weight > 0.0 {
+                 // Scale loss is the sum of the squared differences between the
+                 // predicted scale and the target scale.
+-                let scale_loss = (splats.scales() * vis_weight.unsqueeze_dim(1)).sum();
++                let scale_loss = (splats.scales() * vis_weight.clone().unsqueeze_dim(1)).sum();
+                 loss + scale_loss * scale_loss_weight
+             } else {
+                 loss
++            };
++
++            // Anisotropy regularization: unlike scale_loss_weight/opac_loss_weight above
++            // (which penalize a splat's overall MAGNITUDE and don't care about its shape -
++            // see gs_server/config.py's opac_decay comment for why that doesn't touch
++            // "needle" artifacts: it just shrinks/prunes splats uniformly, survivors bloat
++            // back to cover the resulting gaps), this penalizes the max/min scale-axis
++            // RATIO directly. Only ratios beyond aniso_reg_ratio_threshold are penalized
++            // (squared hinge, computed in log-space so the ratio itself never needs
++            // exponentiating) - ordinary anisotropic splats (flat walls/floors, ratios of
++            // 10-50x) are legitimate and common, this only targets the extreme tail.
++            let aniso_loss_weight = self.config.aniso_reg_weight * aux_loss_weight;
++            let loss = if aniso_loss_weight > 0.0 {
++                let log_scales = splats.log_scales.val();
++                let max_log = log_scales.clone().max_dim(1);
++                let min_log = log_scales.min_dim(1);
++                let log_ratio = max_log - min_log;
++                let log_threshold = self.config.aniso_reg_ratio_threshold.ln();
++                let excess = (log_ratio - log_threshold).clamp_min(0.0);
++                let violator_weight = excess.clone().greater_elem(0.0).float() * vis_weight.clone().unsqueeze_dim(1);
++                let weighted_excess = excess.powi_scalar(2) * vis_weight.clone().unsqueeze_dim(1);
++                let violator_count = violator_weight.sum().clamp_min(1.0);
++                loss + weighted_excess.sum() / violator_count * aniso_loss_weight
++            } else {
++                loss
++            };
++
++            // Depth supervision: compares the renderer's own accumulated-depth channel
++            // (see helpers::ProjectedSplat.depth in brush-render) against a ground-truth
++            // depth map, where the dataset provides one (brush-dataset's sibling `depth/`
++            // directory convention). Weighted by the rendered alpha so poorly-covered
++            // pixels (where the accumulated depth is mostly background/undefined) don't
++            // pull the loss around, and masked to only the source depth map's valid (>0)
++            // pixels - LiDAR/ARKit depth uses 0 as a "no data" sentinel.
++            let depth_loss_weight = self.config.depth_loss_weight;
++            let loss = if depth_loss_weight > 0.0 {
++                if let Some(gt_depth) = &batch.depth_tensor {
++                    let pred_depth = pred_image.clone().slice(s![.., .., 4..5]);
++                    let pred_alpha = pred_image.clone().slice(s![.., .., 3..4]);
++                    // Beyond depth_max_range, LiDAR/ARKit depth tends to return a
++                    // plausible-looking but wrong value rather than failing outright -
++                    // treat those the same as the 0 "no data" sentinel rather than
++                    // trusting them (see config.rs's comment on depth_max_range).
++                    let valid_near = gt_depth.clone().greater_elem(0.0).float();
++                    let valid_far = gt_depth.clone().lower_elem(self.config.depth_max_range).float();
++                    let valid = valid_near * valid_far;
++                    let depth_err = (pred_depth - gt_depth.clone()).abs() * valid.clone() * pred_alpha;
++                    let valid_count = valid.sum().clamp_min(1.0);
++                    loss + depth_err.sum() / valid_count * depth_loss_weight
++                } else {
++                    loss
++                }
++            } else {
++                loss
++            };
++
++            // Position anchor: a direct 3D prior pulling each splat's mean back
++            // toward the point-cloud position it (or its splitting ancestor - see
++            // refine_splats) was created at, once it drifts beyond
++            // position_anchor_max_dist. Unlike depth_loss_weight this needs no
++            // camera rendering at all - it's the same point cloud already used to
++            // seed the Gaussians, just enforced as a standing constraint instead of
++            // a one-time initialization. Meant to stop photometric optimization
++            // from dragging splats into "needle"/floating-fragment configurations
++            // far from geometry the point cloud already gives us with confidence.
++            let anchor_weight = self.config.position_anchor_weight * aux_loss_weight;
++            if anchor_weight > 0.0 {
++                if let Some(anchor) = &self.position_anchor {
++                    let anchor_diff: Tensor<DiffBackend, 2> = Tensor::from_inner(anchor.clone());
++                    let dist = (splats.means.val() - anchor_diff)
++                        .powi_scalar(2)
++                        .sum_dim(1)
++                        .sqrt();
++                    let excess = (dist - self.config.position_anchor_max_dist).clamp_min(0.0);
++                    let violator_weight = excess.clone().greater_elem(0.0).float() * vis_weight.clone().unsqueeze_dim(1);
++                    let weighted_excess = excess.powi_scalar(2) * vis_weight.unsqueeze_dim(1);
++                    let violator_count = violator_weight.sum().clamp_min(1.0);
++                    loss + weighted_excess.sum() / violator_count * anchor_weight
++                } else {
++                    loss
++                }
++            } else {
++                loss
+             }
+         });
+ 
++        // Photometric-consistency tracking (see config.rs
++        // photo_consistency_enabled) - purely additive bookkeeping computed
++        // from already-available forward-pass tensors (pred_rgb/gt_rgb/aux),
++        // does NOT feed into `loss` above and cannot affect gradients or any
++        // other training behavior. Samples the actual per-pixel rendering
++        // error at each visible splat's own projected screen position
++        // (aux.projected_splats' xy, laid out one row per splat - see
++        // ProjectedSplat in helpers.wgsl).
++        if self.config.photo_consistency_enabled && iter >= self.config.photo_consistency_warmup_steps
++            && let (Some(sum_acc), Some(count_acc)) =
++                (self.photo_resid_sum.take(), self.photo_resid_count.take())
++        {
++            trace_span!("Photo consistency tracking").in_scope(|| {
++                let n_splats = splats.num_splats() as usize;
++                let resid_map = (pred_rgb.clone() - gt_rgb.clone())
++                    .abs()
++                    .sum_dim(2)
++                    .inner()
++                    .reshape([img_h * img_w]);
++
++                let proj_diff: Tensor<DiffBackend, 2> = Tensor::from_primitive(
++                    TensorPrimitive::Float(aux.projected_splats.clone()),
++                );
++                let proj: Tensor<MainBackend, 2> = proj_diff.inner().reshape([n_splats, 10]);
++                let xf = proj
++                    .clone()
++                    .slice(s![.., 0..1])
++                    .squeeze(1)
++                    .clamp(0.0, (img_w - 1) as f32);
++                let yf = proj
++                    .slice(s![.., 1..2])
++                    .squeeze(1)
++                    .clamp(0.0, (img_h - 1) as f32);
++                let flat_idx = (yf * (img_w as f32) + xf).int();
++                let sampled = resid_map.select(0, flat_idx);
++                let vis_mask = visible.clone().inner();
++
++                self.photo_resid_sum = Some(sum_acc + sampled * vis_mask.clone());
++                self.photo_resid_count = Some(count_acc + vis_mask);
++            });
++        }
++
+         let mut grads = trace_span!("Backward pass").in_scope(|| loss.backward());
+ 
+         #[cfg(any(feature = "debug-validation", test))]
+@@ -378,8 +545,24 @@ impl SplatTrainer {
+             .squeeze(1);
+         let prune_mask = alpha_mask.bool_or(scale_mask).bool_or(bound_mask);
+ 
+-        let (mut splats, refiner, pruned_count) =
+-            prune_points(splats, &mut record, refiner, prune_mask).await;
++        let photo_resid_in = match (self.photo_resid_sum.take(), self.photo_resid_count.take()) {
++            (Some(sum), Some(count)) => Some((sum, count)),
++            _ => None,
++        };
++        let (mut splats, refiner, pruned_count, anchor, photo_resid_out) = prune_points(
++            splats,
++            &mut record,
++            refiner,
++            prune_mask,
++            self.position_anchor.take(),
++            photo_resid_in,
++        )
++        .await;
++        self.position_anchor = anchor;
++        if let Some((sum, count)) = photo_resid_out {
++            self.photo_resid_sum = Some(sum);
++            self.photo_resid_count = Some(count);
++        }
+         let mut add_indices = HashSet::new();
+ 
+         // Replace dead gaussians.
+@@ -444,6 +627,28 @@ impl SplatTrainer {
+         )
+     }
+ 
++    /// Per-splat (residual_sum, visible_count) for the photo-consistency
++    /// statistic (see config.rs photo_consistency_enabled), for export
++    /// alongside the model. `None` when the feature is disabled - existing
++    /// export/PLY behavior is then completely unchanged.
++    pub async fn photo_consistency_stats(&mut self) -> Option<(Vec<f32>, Vec<f32>)> {
++        let sum = self.photo_resid_sum.as_ref()?;
++        let count = self.photo_resid_count.as_ref()?;
++        let sum_data = sum
++            .clone()
++            .into_data_async()
++            .await
++            .into_vec::<f32>()
++            .expect("Unreachable");
++        let count_data = count
++            .clone()
++            .into_data_async()
++            .await
++            .into_vec::<f32>()
++            .expect("Unreachable");
++        Some((sum_data, count_data))
++    }
++
+     fn refine_splats(
+         &mut self,
+         device: &WgpuDevice,
+@@ -480,6 +685,27 @@ impl SplatTrainer {
+                 .inner()
+                 .select(0, refine_inds.clone());
+ 
++            // A split/cloned splat inherits its parent's anchor point unchanged -
++            // it's still the same point-cloud-supported region, just represented
++            // by more (smaller, jittered) Gaussians now. See position_anchor_weight.
++            let cur_anchor = self
++                .position_anchor
++                .as_ref()
++                .map(|a| a.clone().select(0, refine_inds.clone()));
++
++            // A split/cloned splat starts with no photo-consistency history of
++            // its own (zero sum/count) rather than inheriting its parent's -
++            // it's a fresh, smaller/jittered Gaussian whose own convergence
++            // behavior needs to be observed independently, unlike the anchor
++            // point (a fixed spatial reference that's still valid unchanged).
++            let cur_photo_resid = match (&self.photo_resid_sum, &self.photo_resid_count) {
++                (Some(_), Some(_)) => Some((
++                    Tensor::<MainBackend, 1>::zeros([refine_count], device),
++                    Tensor::<MainBackend, 1>::zeros([refine_count], device),
++                )),
++                _ => None,
++            };
++
+             // The amount to offset the scale and opacity should maybe depend on how far away we have sampled these gaussians,
+             // but a fixed amount seems to work ok. The only note is that divide by _less_ than SQRT(2) seems to exponentially
+             // blow up, as more 'mass' is added each refine.
+@@ -534,6 +760,19 @@ impl SplatTrainer {
+                 |x| Tensor::cat(vec![x, Tensor::zeros([refine_count, sh_dim, 3], device)], 0),
+                 |x| Tensor::cat(vec![x, Tensor::zeros([refine_count], device)], 0),
+             );
++
++            if let (Some(anchor), Some(cur_anchor)) = (&self.position_anchor, cur_anchor) {
++                self.position_anchor = Some(Tensor::cat(vec![anchor.clone(), cur_anchor], 0));
++            }
++
++            if let (Some(sum), Some(count), Some((cur_sum, cur_count))) = (
++                &self.photo_resid_sum,
++                &self.photo_resid_count,
++                cur_photo_resid,
++            ) {
++                self.photo_resid_sum = Some(Tensor::cat(vec![sum.clone(), cur_sum], 0));
++                self.photo_resid_count = Some(Tensor::cat(vec![count.clone(), cur_count], 0));
++            }
+         }
+         self.optim = Some(create_default_optimizer().load_record(record));
+         splats
+@@ -606,12 +845,21 @@ fn map_opt<B: AutodiffBackend, const D: usize>(
+ //
+ // Args:
+ //   mask: bool[n]. If True, prune this Gaussian.
++#[allow(clippy::type_complexity)]
+ async fn prune_points(
+     mut splats: Splats<DiffBackend>,
+     record: &mut HashMap<ParamId, AdaptorRecord<AdamScaled, DiffBackend>>,
+     mut refiner: RefineRecord<MainBackend>,
+     prune: Tensor<MainBackend, 1, Bool>,
+-) -> (Splats<DiffBackend>, RefineRecord<MainBackend>, u32) {
++    mut anchor: Option<Tensor<MainBackend, 2>>,
++    mut photo_resid: Option<(Tensor<MainBackend, 1>, Tensor<MainBackend, 1>)>,
++) -> (
++    Splats<DiffBackend>,
++    RefineRecord<MainBackend>,
++    u32,
++    Option<Tensor<MainBackend, 2>>,
++    Option<(Tensor<MainBackend, 1>, Tensor<MainBackend, 1>)>,
++) {
+     assert_eq!(
+         prune.dims()[0] as u32,
+         splats.num_splats(),
+@@ -620,14 +868,14 @@ async fn prune_points(
+ 
+     let prune_count = prune.dims()[0];
+     if prune_count == 0 {
+-        return (splats, refiner, 0);
++        return (splats, refiner, 0, anchor, photo_resid);
+     }
+ 
+     let valid_inds = prune.bool_not().argwhere_async().await;
+ 
+     if valid_inds.dims()[0] == 0 {
+         log::warn!("Trying to create empty splat!");
+-        return (splats, refiner, 0);
++        return (splats, refiner, 0, anchor, photo_resid);
+     }
+ 
+     let start_splats = splats.num_splats();
+@@ -648,7 +896,10 @@ async fn prune_points(
+             |x| x.select(0, valid_inds.clone()),
+             |x| x.select(0, valid_inds.clone()),
+         );
++        anchor = anchor.map(|a| a.select(0, valid_inds.clone()));
++        photo_resid = photo_resid
++            .map(|(sum, count)| (sum.select(0, valid_inds.clone()), count.select(0, valid_inds.clone())));
+         refiner = refiner.keep(valid_inds);
+     }
+-    (splats, refiner, start_splats - new_points)
++    (splats, refiner, start_splats - new_points, anchor, photo_resid)
+ }
+diff --git a/crates/brush-ui/src/scene.rs b/crates/brush-ui/src/scene.rs
+index 254f611..f27707f 100644
+--- a/crates/brush-ui/src/scene.rs
++++ b/crates/brush-ui/src/scene.rs
+@@ -58,7 +58,7 @@ impl ErrorDisplay {
+ }
+ 
+ async fn export(splat: Splats<MainBackend>) -> Result<(), anyhow::Error> {
+-    let data = brush_serde::splat_to_ply(splat).await?;
++    let data = brush_serde::splat_to_ply(splat, None).await?;
+     rrfd::save_file("export.ply", data).await?;
+     Ok(())
+ }
+-- 
+2.34.1
+
