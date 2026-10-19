@@ -1,0 +1,5 @@
+# Client-side helper scripts in tools/ (NOT the server - that is gs_server/requirements.txt)
+requests>=2.31
+opencv-python-headless>=4.8
+numpy>=1.24
+markdown>=3.5

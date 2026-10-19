@@ -1,0 +1,4 @@
+# patches must keep LF (git apply breaks on CRLF); shell scripts run on the Linux VM
+*.patch  -text
+*.bundle binary
+*.sh     text eol=lf
