@@ -6,11 +6,11 @@
 ## 0. Коротко (чек-лист)
 
 1. `git clone https://github.com/anomalisfree/GS_Server.git` (код, документация, `tools/`, `patches/`).
-   **Важно:** на момент передачи последние 11 коммитов (включая эту инструкцию) **не отправлены на GitHub**:
-   `git push` с этого ПК упал с «Invalid username or token». Сначала выполните вход (раздел 2.1) и
-   `git push origin main`. Если GitHub недоступен, возьмите готовый файл
-   `C:\Space\Projects\VSProjects\GS_Sever_backup\GS_Server_full_2026-10-19.bundle` (45 МБ, вся история),
-   скопируйте на новый ПК и выполните `git clone GS_Server_full_2026-10-19.bundle GS_Server`.
+   Все коммиты отправлены на GitHub (2026-10-20, `main` = `origin/main`). На новом ПК при первом
+   `git clone` откроется вход в GitHub через браузер (раздел 2.1). Если GitHub недоступен, возьмите
+   файл `C:\Space\Projects\VSProjects\GS_Sever_backup\GS_Server_full_2026-10-19.bundle` (45 МБ, вся история
+   на момент 2026-10-19), скопируйте на новый ПК и выполните `git clone GS_Server_full_2026-10-19.bundle GS_Server`,
+   затем `git pull` из GitHub, когда доступ появится.
 2. Установить Python 3.11 и Google Cloud SDK; `pip install -r tools/requirements.txt`.
 3. `gcloud auth login alex.lisavets@q3dsensing.com`, `gcloud config set project dgs-training`.
 4. Скопировать вручную то, чего нет в git: папку `data/` (минимум `data/CameraSet`, 1,3 ГБ + `results` 0,2 ГБ).
@@ -58,14 +58,17 @@ pip install -r tools/requirements.txt
 
 ### 2.1 Вход в GitHub (чтобы работали `git push` и `git pull`)
 
-Парольный вход GitHub не поддерживает. Любой из способов:
+Парольный вход GitHub не поддерживает. Проще всего: Git for Windows уже содержит Git Credential Manager, при
+первом `git clone`/`git push` он сам откроет окно браузера: войдите в аккаунт `anomalisfree` и нажмите
+**Authorize**, вход запомнится (так и был выполнен пуш 2026-10-20). Запасные способы:
 
 * `winget install GitHub.cli`, затем `gh auth login` (браузер) и `gh auth setup-git`;
 * или Personal Access Token (GitHub -> Settings -> Developer settings), его вводят вместо пароля при первом
-  `git push`; Git Credential Manager (идёт с Git for Windows) запомнит его.
+  `git push`.
 
-Токены и пароли никому (в том числе Claude) не передавайте в чат: вход выполняйте сами. Пока вход не
-сделан, `git push origin main` с этого ПК отправляет в Git только ошибку авторизации, ничего не теряется.
+Токены и пароли никому (в том числе Claude) не передавайте в чат: вход выполняйте сами в браузере.
+Если инструмент запускается без окна (например, из агента без интерактивного режима), `git push`
+падает с «Invalid username or token»: выполните его в обычном терминале с `GCM_INTERACTIVE=always`.
 
 ## 3. Доступ к серверу (Google Cloud)
 
